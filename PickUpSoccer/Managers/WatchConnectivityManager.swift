@@ -91,55 +91,49 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
     // MARK: - WCSessionDelegate (iOS side)
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        // Optional: Handle activation completion
+        // 此函数保持不变
+        print("📱 iPhone WCSession 激活状态: \(activationState.rawValue)")
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {
-        // Optional: Handle session becoming inactive
+        // 可选: 处理 session 变为非活动状态
     }
 
     func sessionDidDeactivate(_ session: WCSession) {
-        // Session might deactivate if the user unpairs their watch.
-        // We should reactivate it to be ready for a new watch.
+        // 用户可能更换了手表，需要重新激活
         session.activate()
     }
 
-    // !! **Core Logic: Receiving messages from Watch** !!
-    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
-        guard let command = message["command"] as? String else {
-            print("❌ Command field not received")
+    // 在 PickUpSoccer/Managers/WatchConnectivityManager.swift 文件中
+
+    // 这个代理方法会在后台被唤醒，非常适合处理比赛结束的最终数据
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
+        guard let command = userInfo["command"] as? String else {
             return
         }
 
-        print("📨 Phone received command from Watch: \(command)")
+        print("📨 Phone received userInfo with command: \(command)")
 
-        // Dispatch asynchronous task using detached to prevent blocking the main thread
+        // 使用 Task.detached 确保在主线程外执行数据处理
         Task.detached(priority: .userInitiated) {
-            let startTime = Date()
-
             await MainActor.run {
                 guard let context = self.modelContainer?.mainContext else {
-                    print("⚠️ Could not get ModelContext")
+                    print("⚠️ [WatchKit] 无法获取 ModelContext")
                     return
                 }
 
+                // 根据命令分发任务
                 switch command {
-                case "newEvent":
-                    self.handleNewEvent(from: message, context: context)
                 case "matchEndedFromWatch":
-                    self.handleMatchEnded(from: message, context: context)
-                case "updateScore":
-                    self.handleScoreUpdate(from: message)
-                case "matchEndedFromPhone":
-                    // This command is sent from phone to watch, so phone won't process it as incoming
-                    break
-                default:
-                    print("⚠️ Unknown command: \(command)")
-                }
+                    // 调用我们全新的、安全的统计函数
+                    self.handleFinalSyncAndEndMatch(from: userInfo, context: context)
+                
+                case "newEventBackup":
+                    // 这里可以保留您之前的单个事件备份逻辑（如果需要）
+                    self.handleNewEvent(from: userInfo, context: context)
 
-                let elapsed = Date().timeIntervalSince(startTime)
-                if elapsed > 1.5 {
-                    print("⏱️ Warning: Processing command \(command) took \(elapsed) seconds, consider optimization")
+                default:
+                    print("⚠️ [WatchKit] 收到未知的 userInfo command: \(command)")
                 }
             }
         }
@@ -249,95 +243,94 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
     }
     
-    private func handleMatchEnded(from message: [String: Any], context: ModelContext) {
-        guard let matchIdStr = message["matchId"] as? String,
-              let matchId = UUID(uuidString: matchIdStr) else { return }
+    // 在 PickUpSoccer/Managers/WatchConnectivityManager.swift 文件中
 
+    // 新增这个函数来替代旧的、有问题的 handleMatchEnded
+    private func handleFinalSyncAndEndMatch(from userInfo: [String: Any], context: ModelContext) {
+        // 1. 解析比赛ID
+        guard let matchIdStr = userInfo["matchId"] as? String,
+              let matchId = UUID(uuidString: matchIdStr) else {
+            print("❌ [Sync] 无法解析 matchId")
+            return
+        }
+
+        // 2. 查找手机本地的比赛对象
         let matchPredicate = #Predicate<Match> { $0.id == matchId }
-        guard let match = (try? context.fetch(FetchDescriptor(predicate: matchPredicate)))?.first else { return }
-
-        if let homeScore = message["homeScore"] as? Int {
-            match.homeScore = homeScore
+        guard let match = (try? context.fetch(FetchDescriptor(predicate: matchPredicate)))?.first else {
+            print("❌ [Sync] 手机上未找到比赛，ID: \(matchIdStr)")
+            return
         }
-        if let awayScore = message["awayScore"] as? Int {
-            match.awayScore = awayScore
-        }
-
-        // ✅ Thoroughly delete old events (delete from database, not just remove from match.events)
-        let allEvents = try? context.fetch(FetchDescriptor<MatchEvent>())
-        if let eventsToDelete = allEvents?.filter({ $0.match?.id == match.id }) {
-            for e in eventsToDelete {
-                context.delete(e)
-            }
-        }
-        match.events = []
         
-        // Clear all historical scores for player stats
-        for stats in match.playerStats {
-            stats.goals = 0
-            stats.assists = 0
-            stats.saves = 0
+        // 如果比赛已经结束，则不再处理，防止重复执行
+        guard match.status != .finished else {
+            print("ℹ️ [Sync] 比赛已结束，忽略重复的结束指令。")
+            return
         }
 
-        // ✅ Rebuild new events
-        if let rawEvents = message["events"] as? [[String: Any]] {
-            for raw in rawEvents {
-                guard
-                    let typeStr = raw["eventType"] as? String,
-                    let eventType = EventType(rawValue: typeStr),
-                    let timestamp = raw["timestamp"] as? Double,
-                    // Use playerId for both scorer and goalkeeper based on eventType
-                    let primaryPlayerIdStr = raw["playerId"] as? String,
-                    let primaryPlayerId = UUID(uuidString: primaryPlayerIdStr)
-                else { continue }
+        // 3. 获取手机本地已有的事件ID集合，用于去重
+        let localEventIds = Set(match.events.map { $0.id })
 
-                let event = MatchEvent(
+        // 4. 解析手表发来的事件列表
+        guard let watchEventsPayload = userInfo["events"] as? [[String: Any]] else {
+            print("⚠️ [Sync] 手表发来的数据中缺少事件列表。")
+            // 即使没有事件，也应该结束比赛
+            match.status = .finished
+            match.updateMatchStats()
+            try? context.save()
+            return
+        }
+
+        // 5. 【核心同步逻辑】遍历手表事件，只添加手机没有的事件
+        for eventPayload in watchEventsPayload {
+            guard let eventIdStr = eventPayload["eventId"] as? String,
+                  let eventId = UUID(uuidString: eventIdStr) else { continue }
+
+            // 如果手机本地没有这个事件，就根据手表的数据创建一个新的
+            if !localEventIds.contains(eventId) {
+                print("🔄 [Sync] 发现并同步一个缺失的事件: \(eventIdStr)")
+                
+                guard let eventTypeStr = eventPayload["eventType"] as? String,
+                      let eventType = EventType(rawValue: eventTypeStr),
+                      let timestamp = eventPayload["timestamp"] as? TimeInterval,
+                      let isHomeTeam = eventPayload["isHomeTeam"] as? Bool else { continue }
+                
+                let newEvent = MatchEvent(
+                    id: eventId, // 使用手表传来的ID，保持一致
                     eventType: eventType,
                     timestamp: Date(timeIntervalSince1970: timestamp),
-                    isHomeTeam: raw["isHomeTeam"] as? Bool ?? false
+                    isHomeTeam: isHomeTeam,
+                    match: match
                 )
-                event.match = match
 
-                if eventType == .save {
-                    if let goalkeeperStats = match.playerStats.first(where: { $0.player?.id == primaryPlayerId }) {
-                        event.goalkeeper = goalkeeperStats.player
+                // 根据事件类型，关联正确的球员
+                if eventType == .goal, let scorerIdStr = eventPayload["playerId"] as? String, let scorerId = UUID(uuidString: scorerIdStr) {
+                    newEvent.scorer = match.playerStats.first(where: { $0.player?.id == scorerId })?.player
+                    if let assistantIdStr = eventPayload["assistantId"] as? String, let assistantId = UUID(uuidString: assistantIdStr) {
+                        newEvent.assistant = match.playerStats.first(where: { $0.player?.id == assistantId })?.player
                     }
-                } else {
-                    if let scorerStats = match.playerStats.first(where: { $0.player?.id == primaryPlayerId }) {
-                        event.scorer = scorerStats.player
-                    }
+                } else if eventType == .save, let goalkeeperIdStr = eventPayload["playerId"] as? String, let goalkeeperId = UUID(uuidString: goalkeeperIdStr) {
+                    newEvent.goalkeeper = match.playerStats.first(where: { $0.player?.id == goalkeeperId })?.player
                 }
-
-                if let assistantStr = raw["assistantId"] as? String,
-                   let assistantId = UUID(uuidString: assistantStr),
-                   let assistantStats = match.playerStats.first(where: { $0.player?.id == assistantId }) {
-                    event.assistant = assistantStats.player
-                }
-                event.match = match
-                context.insert(event) // SwiftData automatically establishes relationships
-                match.events.append(event)
+                
+                context.insert(newEvent)
             }
         }
 
-        match.status = .finished
+        // 6. 【最终统计】在数据完全同步后，调用统计函数
+        print("✅ [Sync] 数据同步完成，开始最终统计...")
         match.updateMatchStats()
-        try? context.save()
+        match.status = .finished
 
-        print("✅ Full end: Event count = \(match.events.count)")
-        objectWillChange.send()
-    
-        print("📦 Current match.id = \(match.id.uuidString)")
-        print("📦 match.events.count = \(match.events.count)")
-        for e in match.events {
-            print("📝 Event: \(e.eventType.rawValue), scorerId: \(e.scorer?.id.uuidString ?? "nil")")
-        }
-        if let allEvents = try? context.fetch(FetchDescriptor<MatchEvent>()) {
-            print("📦 All MatchEvent count = \(allEvents.count)")
-            for e in allEvents {
-                print("📄 Event ID: \(e.id.uuidString), match.id = \(e.match?.id.uuidString ?? "nil"), Type: \(e.eventType.rawValue)")
-            }
+        // 7. 保存所有更改
+        do {
+            try context.save()
+            print("🎉 [Sync] 比赛已成功结束，统计数据已更新！事件总数: \(match.events.count)")
+        } catch {
+            print("❌ [Sync] 保存最终比赛数据失败: \(error)")
         }
     }
+
+    // !! 重要：你可以删除旧的 `handleMatchEnded` 函数了，因为它已经被 `handleFinalSyncAndEndMatch` 替代。
 
     private func handleScoreUpdate(from message: [String: Any]) {
         guard let matchIdStr = message["matchId"] as? String,
@@ -416,22 +409,50 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
         print("✅ [WatchKit] 成功发送事件到手表: \(event.eventType.rawValue)")
     }
-    
-    // ✅ New: Receive transferUserInfo message
-    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
-        Task { @MainActor in
-            await handleIncomingBackupEvent(userInfo)
+    // MARK: - 统一的消息接收与处理 (核心修正)
+
+    // MARK: - 统一的消息接收与处理 (核心修正)
+
+    // 1. 这是接收通过 sendMessage 发送的前台消息
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
+        print("📨 Phone received message: \(message)")
+        // MARK: - 核心修正
+        // 使用 Task 将任务派发到 MainActor (主线程)
+        Task {
+            await handleReceivedMessage(message)
         }
     }
 
-    // ✅ New: Logic to handle transferUserInfo
-    func handleIncomingBackupEvent(_ message: [String: Any]) async {
-        guard let command = message["command"] as? String, command == "newEventBackup" else { return }
+    
 
-        print("📦 Received transferUserInfo event backup: \(message)")
+    // 3. 创建一个私有的、统一的消息处理器
+    //    这个函数现在被标记为 async，并且因为它在 MainActor 类中，所以它会在主线程上执行
+    private func handleReceivedMessage(_ message: [String: Any]) async {
+        guard let command = message["command"] as? String else {
+            print("❌ 接收到的消息中缺少 'command' 字段")
+            return
+        }
 
-        await MainActor.run {
-            self.session(WCSession.default, didReceiveMessage: message)
+        // 因为调用它的地方已经确保了在主线程，所以这里不再需要 Task 或 @MainActor 块
+        guard let context = self.modelContainer?.mainContext else {
+            print("⚠️ [WatchKit] 无法获取 ModelContext")
+            return
+        }
+
+        switch command {
+        case "newEvent", "newEventBackup":
+            self.handleNewEvent(from: message, context: context)
+            
+        case "matchEndedFromWatch":
+            // 注意：因为 handleFinalSyncAndEndMatch 也需要访问 context，
+            // 并且内部已经是 MainActor 安全的，所以可以直接调用。
+            self.handleFinalSyncAndEndMatch(from: message, context: context)
+
+        case "updateScore":
+            self.handleScoreUpdate(from: message)
+
+        default:
+            print("⚠️ [WatchKit] 收到未知的 command: \(command)")
         }
     }
 }

@@ -40,7 +40,11 @@ struct TimelineView: View {
                         let yPosition = CGFloat(index) * (eventUnitHeight + eventSpacing)
                         
                         // 主队事件（左侧）
-                        if let stats = match.playerStats.first(where: { $0.player?.id == event.scorer?.id }),
+                        // 修正后的代码
+                        // MARK: - 逻辑修正: 同时检查 scorer 和 goalkeeper
+                        let playerForEvent = event.scorer ?? event.goalkeeper
+                        if let player = playerForEvent,
+                           let stats = match.playerStats.first(where: { $0.player?.id == player.id }),
                            stats.isHomeTeam {
                             HStack {
                                 EventCard(event: event, isHomeTeam: true)
@@ -59,7 +63,11 @@ struct TimelineView: View {
                                     y: yPosition + eventUnitHeight / 2)
                         
                         // 客队事件（右侧）
-                        if let stats = match.playerStats.first(where: { $0.player?.id == event.scorer?.id }),
+                        // 修正后的代码
+                        // MARK: - 逻辑修正: 同时检查 scorer 和 goalkeeper
+                        
+                        if let player = playerForEvent,
+                           let stats = match.playerStats.first(where: { $0.player?.id == player.id }),
                            !stats.isHomeTeam {
                             HStack {
                                 Spacer()

@@ -154,48 +154,54 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
 
     // MARK: - Sending Data to Phone
     
+    // 在 PickUpSoccer Watch Watch App/Managers/WatchConnectivityManager.swift 文件中
+
+    // 在 PickUpSoccer Watch Watch App/Managers/WatchConnectivityManager.swift 文件中
+
     // 当在手表上结束比赛时调用
     func endMatchFromWatch() {
         guard let session = try? modelContainer.mainContext.fetch(FetchDescriptor<WatchMatchSession>()).first else {
             clearMatchData()
             return
         }
-        
+
         let events = (try? modelContainer.mainContext.fetch(FetchDescriptor<WatchMatchEvent>())) ?? []
-        print("🧪 全部事件数：\(events.count)")
         let sessionEvents = events.filter { $0.matchSession?.matchId == session.matchId }
-        print("✅ 匹配当前比赛的事件数：\(sessionEvents.count)")
-        
-        let homeScore = sessionEvents.filter { $0.eventType == "goal" && ($0.scorer?.isHomeTeam ?? false) }.count
-        let awayScore = sessionEvents.filter { $0.eventType == "goal" && !($0.scorer?.isHomeTeam ?? true) }.count
-        
 
-        let message: [String: Any] = [
-            "command": "matchEndedFromWatch",
-            "matchId": session.matchId.uuidString,
-            "homeScore": homeScore,
-            "awayScore": awayScore,
-            "events": sessionEvents.map { event in
-                [
-                    "eventType": event.eventType,
-                    "playerId": event.scorer?.playerId.uuidString ?? "",
-                    "assistantId": event.assistant?.playerId.uuidString ?? "",
-                    "isHomeTeam": event.scorer?.isHomeTeam ?? false,
-                    "timestamp": event.timestamp.timeIntervalSince1970
-                ]
+        // MARK: - 核心修正：构建一个完整的数据包用于 transferUserInfo
+        let eventsPayload = sessionEvents.map { event -> [String: Any] in
+            var payload: [String: Any] = [
+                "eventId": event.eventId.uuidString, // 必须包含，用于手机端去重
+                "eventType": event.eventType,
+                "timestamp": event.timestamp.timeIntervalSince1970
+            ]
+            
+            // 根据事件类型，正确地打包球员ID和队伍信息
+            if event.eventType == "save" {
+                payload["playerId"] = event.goalkeeper?.playerId.uuidString ?? ""
+                payload["isHomeTeam"] = event.goalkeeper?.isHomeTeam ?? false
+            } else if event.eventType == "goal" {
+                payload["playerId"] = event.scorer?.playerId.uuidString ?? ""
+                payload["assistantId"] = event.assistant?.playerId.uuidString // 助攻者ID，可能为空
+                payload["isHomeTeam"] = event.scorer?.isHomeTeam ?? false
             }
-        ]
-        
-        // 1. 立即本地清理比赛数据和跳转
-        clearMatchData()
-        // 你可以在这里加一个提示，比如弹窗或跳转到"等待比赛"页面
-
-        // 2. 发送消息到手机
-        WCSession.default.sendMessage(message, replyHandler: nil) { error in
-            print("❌ 手表端发送 matchEnded 消息失败: \(error.localizedDescription)")
+            return payload
         }
         
+        // 构建最终要发送的数据字典
+        let userInfo: [String: Any] = [
+            "command": "matchEndedFromWatch", // 使用这个命令来触发手机端的最终统计
+            "matchId": session.matchId.uuidString,
+            "events": eventsPayload // 包含所有事件的详细信息
+        ]
+
+        // 1. 立即在本地清理比赛数据
+        clearMatchData()
+
+        // 2. 使用 transferUserInfo 发送数据，确保即使手机App在后台也能收到
+        WCSession.default.transferUserInfo(userInfo)
         
+        print("✅ 已通过 transferUserInfo 提交比赛结束指令和完整数据。")
     }
     
 
@@ -206,8 +212,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             print("❌ Watch 无法连接到 Phone（isReachable == false）")
             return
         }
-
-        
 
 
         var payload: [String: Any] = [

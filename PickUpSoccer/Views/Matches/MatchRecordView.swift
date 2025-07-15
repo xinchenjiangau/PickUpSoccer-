@@ -13,10 +13,6 @@ struct MatchRecordView: View {
     @State private var selectedTeamIsHome = true // Used to identify whether the home team or away team is selected
     // @State private var shouldNavigateToMatches = false  // Used to control navigation back to MatchesView
     @State private var currentTime = Date()
-    @StateObject private var audioManager = AudioManager()
-    @State private var showingConfirmation = false
-    @State private var recognizedCommand = ""
-    @State private var currentEvent: MatchEvent?
     @State private var showingAddPlayer = false
     @State private var showEndConfirmation = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -144,23 +140,6 @@ struct MatchRecordView: View {
             // Timeline View
             TimelineView(match: match)
                 .frame(maxHeight: .infinity)
-            
-            // Add recording button
-            VStack {
-                Button(action: handleRecordingButton) {
-                    Image(systemName: audioManager.isRecording ? "stop.circle.fill" : "mic.circle.fill")
-                        .font(.system(size: 44))
-                        .foregroundColor(audioManager.isRecording ? .red : .blue)
-                }
-                .padding()
-                
-                if !audioManager.recognizedText.isEmpty {
-                    Text(audioManager.recognizedText)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-            .padding(.bottom)
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -193,53 +172,9 @@ struct MatchRecordView: View {
         .sheet(isPresented: $showingEventSelection) {
             EventSelectionView(match: match, isHomeTeam: selectedTeamIsHome)
         }
-        .sheet(isPresented: $showingConfirmation) {
-            if let event = currentEvent {
-                ConfirmationView(
-                    recognizedText: recognizedCommand,
-                    onConfirm: {
-                        handleConfirmedEvent(event)
-                        showingConfirmation = false
-                    },
-                    onCancel: {
-                        showingConfirmation = false
-                    }
-                )
-            }
-        }
-        .sheet(isPresented: $showingAddPlayer) {
-            AddMatchPlayerView(match: match)
-        }
-        .sheet(isPresented: $showEndConfirmation) {
-            ConfirmationView(
-                title: "End Match",
-                message: "Are you sure you want to end this match? Data cannot be modified after ending.",
-                confirmAction: {
-                    showEndConfirmation = false
-                    // Delay execution to ensure sheet closes first
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        endMatch()
-                    }
-                },
-                cancelAction: {
-                    showEndConfirmation = false
-                }
-            )
-        }
-        .alert("Permissions Required", isPresented: $audioManager.showPermissionAlert) {
-            Button("Go to Settings", role: .cancel) {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-            Button("Cancel", role: .destructive) {
-                audioManager.showPermissionAlert = false
-            }
-        } message: {
-            Text(audioManager.permissionError ?? "Please grant necessary permissions in settings")
-        }
+        
         .onAppear {
-            setupAudioManager()
+            
             // Trigger a view refresh to ensure toolbar rendering
             _ = match.id
             WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
@@ -252,63 +187,7 @@ struct MatchRecordView: View {
         }
     }
     
-    private func setupAudioManager() {
-        audioManager.recordingCallback = { text in
-            recognizedCommand = text
-            if let event = VoiceCommandParser.parseCommand(text, match: match) {
-                currentEvent = event
-                showingConfirmation = true
-            }
-        }
-    }
     
-    private func handleRecordingButton() {
-        if audioManager.isRecording {
-            audioManager.stopRecording()
-        } else {
-            if audioManager.permissionGranted {
-                do {
-                    try audioManager.startRecording()
-                } catch {
-                    print("Recording failed to start: \(error)")
-                }
-            } else {
-                audioManager.checkPermissions()
-            }
-        }
-    }
-    
-    private func handleConfirmedEvent(_ event: MatchEvent) {
-        // Update score
-        if event.eventType == .goal {
-            if event.isHomeTeam {
-                match.homeScore += 1
-            } else {
-                match.awayScore += 1
-            }
-            
-            // Update player stats
-            if let stats = match.playerStats.first(where: { $0.player?.id == event.scorer?.id }) {
-                stats.goals += 1
-            }
-        } else if event.eventType == .save {
-            // Update player stats
-            // Ensure event.goalkeeper is used if available and correctly set in EventSelectionView
-            if let stats = match.playerStats.first(where: { $0.player?.id == event.goalkeeper?.id }) { // Changed to event.goalkeeper
-                stats.saves += 1
-            }
-        }
-        
-        modelContext.insert(event)
-        match.events.append(event) // Removed: SwiftData handles inverse relationships automatically
-        do {
-            try modelContext.save()
-            // [新增] 在语音事件保存成功后，调用同步函数
-            WatchConnectivityManager.shared.sendEventToWatch(event, matchId: match.id)
-        } catch {
-            print("保存语音确认的事件失败: \(error)")
-        }
-    }
     
     private func endMatch() {
         // Update match status

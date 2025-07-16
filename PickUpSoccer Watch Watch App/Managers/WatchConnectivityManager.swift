@@ -207,40 +207,39 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
 
 
     func sendNewEventToPhone(_ event: WatchMatchEvent) {
-        guard WCSession.default.isReachable, let matchSession = event.matchSession else { return }
-        guard WCSession.default.isReachable else {
-            print("❌ Watch 无法连接到 Phone（isReachable == false）")
-            return
-        }
-
-
-        var payload: [String: Any] = [
-            "command": "newEvent",
-            "matchId": matchSession.matchId.uuidString,
-            "eventId": event.eventId.uuidString,
-            "eventType": event.eventType,
-            "timestamp": event.timestamp,
-            // The phone-side logic will use isHomeTeam from the scorer/goalkeeper
-        ]
+//        guard WCSession.default.isReachable, let matchSession = event.matchSession else { return }
+//        guard WCSession.default.isReachable else {
+//            print("❌ Watch 无法连接到 Phone（isReachable == false）")
+//            return
+//        }
+//
+//
+//        var payload: [String: Any] = [
+//            "command": "newEvent",
+//            "matchId": matchSession.matchId.uuidString,
+//            "eventId": event.eventId.uuidString,
+//            "eventType": event.eventType,
+//            "timestamp": event.timestamp,
+//            // The phone-side logic will use isHomeTeam from the scorer/goalkeeper
+//        ]
+//        
+//        let isHome = event.scorer?.isHomeTeam ?? false
+//        let playerId: String
+//        if event.eventType == "save" {
+//            playerId = event.goalkeeper?.playerId.uuidString ?? ""
+//        } else {
+//            playerId = event.scorer?.playerId.uuidString ?? ""
+//        }
+//        payload["playerId"] = playerId // ✅ 添加这一行
+//
+//        if let assistant = event.assistant { payload["assistantId"] = assistant.playerId.uuidString }
+//        if let goalkeeper = event.goalkeeper { payload["goalkeeperId"] = goalkeeper.playerId.uuidString }
+//        
+//        print("发送事件 payload: \(payload)")
         
-        let isHome = event.scorer?.isHomeTeam ?? false
-        let playerId: String
-        if event.eventType == "save" {
-            playerId = event.goalkeeper?.playerId.uuidString ?? ""
-        } else {
-            playerId = event.scorer?.playerId.uuidString ?? ""
-        }
-        payload["playerId"] = playerId // ✅ 添加这一行
-
-        if let assistant = event.assistant { payload["assistantId"] = assistant.playerId.uuidString }
-        if let goalkeeper = event.goalkeeper { payload["goalkeeperId"] = goalkeeper.playerId.uuidString }
-        
-        print("发送事件 payload: \(payload)")
-        
-        WCSession.default.sendMessage(payload, replyHandler: nil) { error in
-            print("Error sending event: \(error.localizedDescription)")
-        }
-        
+//        WCSession.default.sendMessage(payload, replyHandler: nil) { error in
+//            print("Error sending event: \(error.localizedDescription)")
+//        }
         backupEventToPhone(event)
     }
     

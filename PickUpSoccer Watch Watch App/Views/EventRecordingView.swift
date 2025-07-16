@@ -51,10 +51,16 @@ struct EventRecordingView: View {
     var body: some View {
         ZStack {
             // 中间的比分显示
-            HStack(spacing: 10) {
-                Text("\(homeScore)").font(.largeTitle).fontWeight(.bold).foregroundColor(.white)
-                Text(":").font(.largeTitle).fontWeight(.bold).foregroundColor(.white)
-                Text("\(awayScore)").font(.largeTitle).fontWeight(.bold).foregroundColor(.white)
+            HStack(alignment: .top,spacing: 10) {
+                Text("\(homeScore)")
+                    .font(.system(size: 60, weight: .bold))
+                    .foregroundColor(.white)
+                Text(":")
+                    .font(.system(size: 60, weight: .bold))
+                    .foregroundColor(.white)
+                Text("\(awayScore)")
+                    .font(.system(size: 60, weight: .bold))
+                    .foregroundColor(.white)
             }
             .zIndex(1)
 
@@ -71,11 +77,11 @@ struct EventRecordingView: View {
                     }
                 }
                 HStack(spacing: 4) {
-                    TeamActionButton(symbol: "S", teamColor: .red.opacity(0.6)) {
+                    TeamActionButton(symbol: "S", teamColor: .red.opacity(0.4)) {
                         isHomeTeamAction = true
                         isRecordingSave = true
                     }
-                    TeamActionButton(symbol: "S", teamColor: .green.opacity(0.6)) {
+                    TeamActionButton(symbol: "S", teamColor: .green.opacity(0.4)) {
                         isHomeTeamAction = false
                         isRecordingSave = true
                     }
@@ -91,7 +97,7 @@ struct EventRecordingView: View {
                     .background(Color.black.opacity(0.5)).cornerRadius(8)
                 Spacer()
             }
-            .padding(.top, 8)
+            .padding(.top, 55)
         }
         .onAppear(perform: setupTimer)
         .onReceive(timer) { _ in
@@ -142,13 +148,42 @@ struct TeamActionButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Rectangle().fill(teamColor)
+                Rectangle().fill(teamColor).cornerRadius(12)
                 Text(symbol)
-                    .font(.system(size: 80, weight: .bold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .font(.system(size: 90, weight: .bold))
+                    .foregroundColor(.white.opacity(0.3))
             }
         }
         .buttonStyle(PlainButtonStyle())
     }
 }
 
+
+// --- 将以下代码添加到文件末尾 ---
+
+#Preview {
+    // 1. 创建一个临时的、仅在内存中使用的 SwiftData 容器
+    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try! ModelContainer(for: WatchMatchSession.self, WatchPlayer.self, WatchMatchEvent.self, configurations: config)
+
+    // 2. 创建一个用于预览的虚拟比赛会话
+    let sampleSession = WatchMatchSession(
+        matchId: UUID(),
+        homeTeamName: "主队",
+        awayTeamName: "客队"
+    )
+    
+    // 3. (可选) 创建一些虚拟球员并关联到会话
+    let player1 = WatchPlayer(playerId: UUID(), name: "球员A", isHomeTeam: true)
+    player1.matchSession = sampleSession
+    let player2 = WatchPlayer(playerId: UUID(), name: "球员B", isHomeTeam: false)
+    player2.matchSession = sampleSession
+    
+    sampleSession.players.append(player1)
+    sampleSession.players.append(player2)
+
+
+    // 4. 将虚拟会话注入到 EventRecordingView 中进行预览
+    return EventRecordingView(session: sampleSession)
+        .modelContainer(container) // 注入容器以供预览使用
+}

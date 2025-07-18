@@ -5,23 +5,39 @@ struct LeaderboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var players: [Player]
     @Query private var matchStats: [PlayerMatchStats]
+    @Query(sort: \Season.startDate, order: .reverse) private var seasons: [Season]
+    @State private var selectedSeason: Season? = nil
     @State private var selectedTab = 0
+    
+    // ✅ 3. 核心修改：创建一个计算属性，它会根据selectedSeason动态筛选比赛统计数据
+    private var filteredStats: [PlayerMatchStats] {
+        if let season = selectedSeason {
+            // 如果用户选择了一个赛季，只返回属于该赛季的比赛统计
+            return matchStats.filter { $0.match?.season?.id == season.id }
+        } else {
+            // 如果用户选择“所有赛季”(selectedSeason为nil)，则返回全部统计数据
+            return matchStats
+        }
+    }
+    
     
     // 进球排行
     var goalScorers: [(player: Player, goals: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
+        // 将 matchStats 替换为 filteredStats
+        let playerStats = Dictionary(grouping: filteredStats, by: { $0.player! })
             .mapValues { stats in
                 stats.reduce(0) { $0 + $1.goals }
             }
         return players.map { player in
             (player: player, goals: playerStats[player] ?? 0)
         }
+        .filter { $0.goals > 0 } // 只显示有进球的球员
         .sorted { $0.goals > $1.goals }
     }
     
     // 助攻排行
     var assistLeaders: [(player: Player, assists: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
+        let playerStats = Dictionary(grouping: filteredStats, by: { $0.player! })
             .mapValues { stats in
                 stats.reduce(0) { $0 + $1.assists }
             }
@@ -33,7 +49,7 @@ struct LeaderboardView: View {
     
     // 扑救排行
     var saveLeaders: [(player: Player, saves: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
+        let playerStats = Dictionary(grouping: filteredStats, by: { $0.player! })
             .mapValues { stats in
                 stats.reduce(0) { $0 + $1.saves }
             }
@@ -45,7 +61,7 @@ struct LeaderboardView: View {
     
     // 评分榜
     var scoreLeaders: [(player: Player, averageScore: Double)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
+        let playerStats = Dictionary(grouping: filteredStats, by: { $0.player! })
         return players.map { player in
             let stats = playerStats[player] ?? []
             let avg = stats.isEmpty ? 0 : stats.map { $0.score }.reduce(0, +) / Double(stats.count)
@@ -60,6 +76,16 @@ struct LeaderboardView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                // ✅ 5. 新增：在顶部添加一个赛季选择器
+                Picker("选择赛季", selection: $selectedSeason) {
+                    Text("所有赛季").tag(Season?.none) // 使用.tag(Season?.none)来代表nil
+                    ForEach(seasons) { season in
+                        Text(season.name).tag(Season?.some(season)) // 使用.tag(Season?.some(...))来代表具体的赛季
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding()
+                
                 // 标题栏
                 HStack {
                     ForEach(0..<4) { index in
@@ -201,7 +227,7 @@ struct LeaderboardScoreTabView: View {
         }
     }
 }
-
-#Preview {
-    LeaderboardView()
-} 
+//
+//#Preview {
+//    LeaderboardView()
+//} 

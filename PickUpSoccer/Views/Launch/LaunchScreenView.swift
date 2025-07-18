@@ -15,24 +15,16 @@ struct LaunchScreenView: View {
                     LoginView()
                 }
             } else {
+                // ... 您的ZStack和动画代码保持不变 ...
                 ZStack {
-                    ThemeColor.primary
-                        .ignoresSafeArea()
-                    
+                    ThemeColor.primary.ignoresSafeArea()
                     VStack(spacing: 20) {
                         Image("iconforsplash_画板 1")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 120, height: 120)
-                            .cornerRadius(25)
-                            
-                        
+                            .resizable().scaledToFit().frame(width: 120, height: 120).cornerRadius(25)
                         Text("PickUp Soccer")
-                            .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(.white)
+                            .font(.system(size: 32, weight: .bold)).foregroundColor(.white)
                     }
-                    .scaleEffect(size)
-                    .opacity(opacity)
+                    .scaleEffect(size).opacity(opacity)
                     .onAppear {
                         withAnimation(.easeIn(duration: 1.2)) {
                             self.size = 1.0
@@ -43,16 +35,11 @@ struct LaunchScreenView: View {
                 .navigationBarHidden(true)
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        withAnimation {
-                            self.isActive = true
-                        }
+                        withAnimation { self.isActive = true }
                     }
                 }
             }
         }
+        // ✅ 所有与migrationState相关的.onChange, .alert, .sheet都已移除
     }
 }
-
-#Preview {
-    LaunchScreenView()
-} 

@@ -199,6 +199,15 @@ struct SettingsView: View {
                     .navigationTitle("球员列表")
             }
             .frame(maxWidth: .infinity, alignment: .leading) // 确保链接靠左
+            // 在 otherSection 的 VStack 中添加
+            Button("登出", role: .destructive) {
+                authManager.signOut()
+            }
+            // 将之前的“清除所有数据”按钮，修改为调用新方法
+            Button("重置当前用户（调试用）", role: .destructive) {
+                authManager.resetCurrentUserForDebugging()
+            }
+            .padding(.top, 10)
         }
         .padding()
         .background(Color.black.opacity(0.05))

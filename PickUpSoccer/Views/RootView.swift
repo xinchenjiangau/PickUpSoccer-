@@ -9,11 +9,11 @@ import SwiftUI
 import SwiftData
 
 struct RootView: View {
-    @Environment(\.modelContext) private var modelContext
+    //@Environment(\.modelContext) private var modelContext
 
     var body: some View {
-        ContentView()
-            .environmentObject(AuthManager(modelContext: modelContext))
+        LaunchScreenView()
+            //.environmentObject(AuthManager(modelContext: modelContext))
     }
 }
 

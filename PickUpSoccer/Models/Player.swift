@@ -15,6 +15,8 @@ final class Player {
     var height: Double?
     var weight: Double?
     var appleUserID: String?
+    // ✅ 新增：用于区分真实用户和虚拟球员
+    var isVirtual: Bool = false
     var nickname: String?
     
     @Relationship(deleteRule: .cascade) var matchStats: [PlayerMatchStats]

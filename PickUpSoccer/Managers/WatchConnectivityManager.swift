@@ -15,10 +15,13 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
 
     private var session: WCSession?
     private var modelContainer: ModelContainer?
+    // ✅ 1. 新增一个属性来持有NavigationCoordinator
+    private var navigationCoordinator: NavigationCoordinator?
 
-    // Allows external injection of ModelContainer
-    func configure(with container: ModelContainer) {
+    // ✅ 2. 修改configure方法，让它能够接收coordinator
+    func configure(with container: ModelContainer, coordinator: NavigationCoordinator) {
         self.modelContainer = container
+        self.navigationCoordinator = coordinator // 保存对coordinator的引用
     }
 
     override init() {
@@ -327,6 +330,11 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             print("🎉 [Sync] 比赛已成功结束，统计数据已更新！事件总数: \(match.events.count)")
         } catch {
             print("❌ [Sync] 保存最终比赛数据失败: \(error)")
+        }
+        // ✅ 4. 核心修复：在数据保存后，通过coordinator通知UI关闭
+        DispatchQueue.main.async {
+            self.navigationCoordinator?.shouldDismissParticipationSheet = true
+            print("➡️ [Sync] 已通过Coordinator请求关闭UI。")
         }
     }
 

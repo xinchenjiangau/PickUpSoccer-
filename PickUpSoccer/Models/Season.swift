@@ -10,6 +10,10 @@ final class Season {
     var notes: String?
     var resources: [Resource]?
     @Relationship(deleteRule: .cascade) var matches: [Match]
+    // ✅ 新增：用于存储管理员的appleUserID
+    // 允许多个管理员，所以使用数组
+    var administratorIDs: [String] = []
+    @Relationship var players: [Player] = []
     
     init(id: UUID = UUID(),
          name: String,
@@ -22,6 +26,7 @@ final class Season {
         self.endDate = endDate
         self.notes = notes
         self.matches = []
+        self.players = []
     }
 }
 

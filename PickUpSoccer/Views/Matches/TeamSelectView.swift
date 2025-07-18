@@ -5,6 +5,7 @@ struct TeamSelectView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @State var selectedPlayers: [Player]
+    let selectedSeason: Season // ✅ 1. 新增这一行，让视图可以接收一个Season对象
     @State private var playerColors: [UUID: Color] = [:] // 存储每个球员的颜色
     @State private var firstPlayerSelected: Bool = false // 记录是否已选择第一个球员
     @State private var showingMatchRecord = false // 状态变量
@@ -99,6 +100,8 @@ struct TeamSelectView: View {
             homeTeamName: "红队",
             awayTeamName: "蓝队"
         )
+        // ✅ 核心修改：为新比赛打上赛季标签
+        newMatch.season = self.selectedSeason
         
         // 初始化比分
         newMatch.homeScore = 0
@@ -231,6 +234,6 @@ extension Array {
     }
 }
 
-#Preview {
-    TeamSelectView(selectedPlayers: [Player(name: "球员1", position: .forward), Player(name: "球员2", position: .midfielder)])
-} 
+//#Preview {
+//    TeamSelectView(selectedPlayers: [Player(name: "球员1", position: .forward), Player(name: "球员2", position: .midfielder)])
+//} 

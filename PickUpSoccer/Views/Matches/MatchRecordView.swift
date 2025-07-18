@@ -172,6 +172,13 @@ struct MatchRecordView: View {
         .sheet(isPresented: $showingEventSelection) {
             EventSelectionView(match: match, isHomeTeam: selectedTeamIsHome)
         }
+        // ✅ 6. 新增一个Alert，用于确认结束比赛
+        .alert("确定要结束这场比赛吗？", isPresented: $showEndConfirmation) {
+            Button("结束比赛", role: .destructive, action: endMatch)
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("比赛结束后，将无法再记录新的事件。")
+        }
         
         .onAppear {
             
@@ -179,12 +186,12 @@ struct MatchRecordView: View {
             _ = match.id
             WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
         }
-        .onChange(of: match.status) { oldStatus, newStatus in
-            if newStatus == .finished {
-                coordinator.shouldDismissParticipationSheet = true
-                dismiss()
-            }
-        }
+//        .onChange(of: match.status) { oldStatus, newStatus in
+//            if newStatus == .finished {
+//                coordinator.shouldDismissParticipationSheet = true
+//                dismiss()
+//            }
+//        }
     }
     
     
@@ -196,15 +203,12 @@ struct MatchRecordView: View {
         // MARK: - 根本问题修复
         // 在保存比赛之前，调用函数来计算并更新所有的最终统计数据。
         match.updateMatchStats()
-        
-        // Per your request, this is commented out.
-        // WatchConnectivityManager.shared.sendFullMatchEndToWatch(match: match)
 
         // Notify MatchesView to close sheet
         coordinator.shouldDismissParticipationSheet = true
 
         // Save the updated match object with correct stats and then dismiss.
-        try? modelContext.save()
+        //try? modelContext.save()
         dismiss()
     }
 }

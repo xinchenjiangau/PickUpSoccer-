@@ -11,7 +11,12 @@ struct ShareData: Identifiable {
 
 struct PlayerListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Player.number) private var players: [Player]
+    // MARK: - 关键修改 1：Query 过滤器
+    // 只查询未归档(isArchived == false)的球员
+    // 注意：SwiftData 的 Predicate 有时对布尔值比较敏感，显式写全比较稳妥
+    @Query(filter: #Predicate<Player> { $0.isArchived == false }, sort: \Player.number)
+    private var players: [Player]
+    
     @Query private var matches: [Match]
     
     // MARK: - State Properties
@@ -117,8 +122,13 @@ struct PlayerListView: View {
     private func deletePlayers(offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(players[index])
+                // 原代码：modelContext.delete(players[index])
+                // 新代码：标记为归档
+                let player = players[index]
+                player.isArchived = true
             }
+            // 显式保存更改
+            try? modelContext.save()
         }
     }
     

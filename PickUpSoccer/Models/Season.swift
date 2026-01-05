@@ -7,35 +7,24 @@ final class Season {
     var name: String
     var startDate: Date
     var endDate: Date
-    var notes: String?
-    var resources: [Resource]?
-    @Relationship(deleteRule: .cascade) var matches: [Match]
+    var isCurrent: Bool // 标记是否为当前默认赛季
+    
+    // 关系
+    // 级联删除：如果赛季被删，比赛也被删（根据需求可调整，目前保持级联以防孤儿数据）
+    @Relationship(deleteRule: .cascade) var matches: [Match]? = []
+    
+    // 球员与赛季是多对多关系
+    @Relationship(inverse: \Player.seasons) var players: [Player]? = []
     
     init(id: UUID = UUID(),
          name: String,
          startDate: Date,
          endDate: Date,
-         notes: String? = nil) {
+         isCurrent: Bool = false) {
         self.id = id
         self.name = name
         self.startDate = startDate
         self.endDate = endDate
-        self.notes = notes
-        self.matches = []
+        self.isCurrent = isCurrent
     }
 }
-
-@Model
-final class Resource {
-    var id: UUID
-    var type: String // "document", "image", "url"
-    var url: URL
-    var resourceDescription: String?
-    
-    init(id: UUID = UUID(), type: String, url: URL, resourceDescription: String? = nil) {
-        self.id = id
-        self.type = type
-        self.url = url
-        self.resourceDescription = resourceDescription
-    }
-} 

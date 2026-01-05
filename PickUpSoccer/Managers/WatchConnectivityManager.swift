@@ -43,7 +43,8 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             [
                 "id": stats.player!.id.uuidString,
                 "name": stats.player!.name,
-                "isHomeTeam": stats.isHomeTeam
+                // [修复] 适配新的 Team 枚举：如果是 .home 则 isHomeTeam 为 true
+                "isHomeTeam": (stats.team == .home)
             ]
         }
         let payload: [String: Any] = [
@@ -91,20 +92,15 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
     // MARK: - WCSessionDelegate (iOS side)
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        // 此函数保持不变
         print("📱 iPhone WCSession 激活状态: \(activationState.rawValue)")
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {
-        // 可选: 处理 session 变为非活动状态
     }
 
     func sessionDidDeactivate(_ session: WCSession) {
-        // 用户可能更换了手表，需要重新激活
         session.activate()
     }
-
-    // 在 PickUpSoccer/Managers/WatchConnectivityManager.swift 文件中
 
     // 这个代理方法会在后台被唤醒，非常适合处理比赛结束的最终数据
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
@@ -114,7 +110,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
 
         print("📨 Phone received userInfo with command: \(command)")
 
-        // 使用 Task.detached 确保在主线程外执行数据处理
         Task.detached(priority: .userInitiated) {
             await MainActor.run {
                 guard let context = self.modelContainer?.mainContext else {
@@ -122,14 +117,11 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
                     return
                 }
 
-                // 根据命令分发任务
                 switch command {
                 case "matchEndedFromWatch":
-                    // 调用我们全新的、安全的统计函数
                     self.handleFinalSyncAndEndMatch(from: userInfo, context: context)
                 
                 case "newEventBackup":
-                    // 这里可以保留您之前的单个事件备份逻辑（如果需要）
                     self.handleNewEvent(from: userInfo, context: context)
 
                 default:
@@ -140,8 +132,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
     }
 
     // MARK: - Message Handlers
-
-    // In xinchenjiangau/pickupsoccer/PickUpSoccer-46a3117d7232204197ff70efc5a54e3337afc15c/Managers/WatchConnectivityManager.swift
 
     private func handleNewEvent(from message: [String: Any], context: ModelContext) {
         // 1. 验证收到的消息是否完整
@@ -171,12 +161,12 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
                let scorerStats = match.playerStats.first(where: { $0.player?.id == scorerId }) {
 
                 newEvent.scorer = scorerStats.player
-                // [修复] 关键修复：正确设置事件属于主队还是客队
-                newEvent.isHomeTeam = scorerStats.isHomeTeam
+                // [修复] 适配新的 Team 枚举
+                newEvent.isHomeTeam = (scorerStats.team == .home)
                 scorerStats.goals += 1
 
                 // [修复] 实时更新比赛比分
-                if scorerStats.isHomeTeam {
+                if scorerStats.team == .home {
                     match.homeScore += 1
                 } else {
                     match.awayScore += 1
@@ -188,45 +178,39 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
                let assistantId = UUID(uuidString: assistantIdStr),
                let assistantStats = match.playerStats.first(where: { $0.player?.id == assistantId }) {
                 newEvent.assistant = assistantStats.player
-                // [修复] 增加助攻者的助攻统计
                 assistantStats.assists += 1
             }
 
         } else if eventType == .save {
             // --- 处理扑救者 ---
-            // 优先使用 "goalkeeperId" 字段
             if let goalkeeperIdStr = message["goalkeeperId"] as? String,
                let goalkeeperId = UUID(uuidString: goalkeeperIdStr),
                let goalkeeperStats = match.playerStats.first(where: { $0.player?.id == goalkeeperId }) {
 
                 newEvent.goalkeeper = goalkeeperStats.player
-                // [修复] 正确设置事件属于主队还是客队
-                newEvent.isHomeTeam = goalkeeperStats.isHomeTeam
-                // [修复] 增加扑救者的扑救统计
+                // [修复] 适配新的 Team 枚举
+                newEvent.isHomeTeam = (goalkeeperStats.team == .home)
                 goalkeeperStats.saves += 1
                 
-            // 如果没有 "goalkeeperId"，则尝试使用 "playerId" 作为备用
             } else if let playerIdStr = message["playerId"] as? String,
                       let playerId = UUID(uuidString: playerIdStr),
                       let playerStats = match.playerStats.first(where: { $0.player?.id == playerId }) {
 
-                // 在扑救事件中，将扑救者信息存入goalkeeper字段
                 newEvent.goalkeeper = playerStats.player
-                newEvent.isHomeTeam = playerStats.isHomeTeam
+                // [修复] 适配新的 Team 枚举
+                newEvent.isHomeTeam = (playerStats.team == .home)
                 playerStats.saves += 1
             }
         }
 
         // 5. 插入新事件并保存
         context.insert(newEvent)
-        //match.events.append(newEvent)
 
         do {
             try context.save()
             print("✅ [WatchKit] 已成功保存事件: \(eventType.rawValue)。比赛 \(match.id) 现在有 \(match.events.count) 个事件。")
         } catch {
             print("❌ [WatchKit] 保存上下文时出错: \(error)")
-            // 如果保存失败，打印出更详细的错误
             print("Error details: \((error as NSError).userInfo)")
         }
     }
@@ -243,9 +227,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
     }
     
-    // 在 PickUpSoccer/Managers/WatchConnectivityManager.swift 文件中
-
-    // 新增这个函数来替代旧的、有问题的 handleMatchEnded
     private func handleFinalSyncAndEndMatch(from userInfo: [String: Any], context: ModelContext) {
         // 1. 解析比赛ID
         guard let matchIdStr = userInfo["matchId"] as? String,
@@ -330,8 +311,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
     }
 
-    // !! 重要：你可以删除旧的 `handleMatchEnded` 函数了，因为它已经被 `handleFinalSyncAndEndMatch` 替代。
-
     private func handleScoreUpdate(from message: [String: Any]) {
         guard let matchIdStr = message["matchId"] as? String,
               let matchId = UUID(uuidString: matchIdStr),
@@ -351,17 +330,19 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
     }
     
     func syncPlayerToWatchIfNeeded(player: Player, match: Match) {
-        guard let isHomeTeam = match.playerStats.first(where: { $0.player?.id == player.id })?.isHomeTeam else {
+        // [修复] 适配新的 Team 枚举
+        guard let team = match.playerStats.first(where: { $0.player?.id == player.id })?.team else {
             print("⚠️ Unable to determine player's team, skipping sync: \(player.name)")
             return
         }
+        let isHomeTeam = (team == .home)
         sendNewPlayerToWatch(player: player, isHomeTeam: isHomeTeam, matchId: match.id)
     }
     
     func sendNewPlayerToWatch(player: Player, isHomeTeam: Bool, matchId: UUID) {
         let payload: [String: Any] = [
             "command": "newPlayer",
-            "playerId": player.id.uuidString, // ✅ This is SwiftData's ID
+            "playerId": player.id.uuidString,
             "name": player.name,
             "isHomeTeam": isHomeTeam,
             "matchId": matchId.uuidString
@@ -372,8 +353,6 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
     }
     
-    // In xinchenjiangau/pickupsoccer/PickUpSoccer-46a3117d7232204197ff70efc5a54e3337afc15c/Managers/WatchConnectivityManager.swift
-
     /// 将手机端创建的单个比赛事件实时同步到手表。
     func sendEventToWatch(_ event: MatchEvent, matchId: UUID) {
         guard let session = session, session.isReachable else {
@@ -382,14 +361,13 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
 
         var payload: [String: Any] = [
-            "command": "newEvent", // 复用手表端已有的 "newEvent" 命令
+            "command": "newEvent",
             "matchId": matchId.uuidString,
             "eventType": event.eventType.rawValue,
             "isHomeTeam": event.isHomeTeam,
             "timestamp": event.timestamp.timeIntervalSince1970
         ]
 
-        // 根据事件类型，添加不同的球员ID
         switch event.eventType {
         case .goal:
             payload["playerId"] = event.scorer?.id.uuidString
@@ -397,10 +375,8 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
                 payload["assistantId"] = assistantId
             }
         case .save:
-            // 对于扑救事件，我们将扑救者ID放在 "goalkeeperId" 字段
             payload["goalkeeperId"] = event.goalkeeper?.id.uuidString
         default:
-            // 为其他未来可能出现的事件类型准备
             payload["playerId"] = event.scorer?.id.uuidString
         }
 
@@ -409,31 +385,24 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         }
         print("✅ [WatchKit] 成功发送事件到手表: \(event.eventType.rawValue)")
     }
-    // MARK: - 统一的消息接收与处理 (核心修正)
 
-    // MARK: - 统一的消息接收与处理 (核心修正)
+    // MARK: - 统一的消息接收与处理
 
     // 1. 这是接收通过 sendMessage 发送的前台消息
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
         print("📨 Phone received message: \(message)")
-        // MARK: - 核心修正
-        // 使用 Task 将任务派发到 MainActor (主线程)
         Task {
             await handleReceivedMessage(message)
         }
     }
 
-    
-
     // 3. 创建一个私有的、统一的消息处理器
-    //    这个函数现在被标记为 async，并且因为它在 MainActor 类中，所以它会在主线程上执行
     private func handleReceivedMessage(_ message: [String: Any]) async {
         guard let command = message["command"] as? String else {
             print("❌ 接收到的消息中缺少 'command' 字段")
             return
         }
 
-        // 因为调用它的地方已经确保了在主线程，所以这里不再需要 Task 或 @MainActor 块
         guard let context = self.modelContainer?.mainContext else {
             print("⚠️ [WatchKit] 无法获取 ModelContext")
             return
@@ -444,15 +413,43 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             self.handleNewEvent(from: message, context: context)
             
         case "matchEndedFromWatch":
-            // 注意：因为 handleFinalSyncAndEndMatch 也需要访问 context，
-            // 并且内部已经是 MainActor 安全的，所以可以直接调用。
             self.handleFinalSyncAndEndMatch(from: message, context: context)
 
         case "updateScore":
             self.handleScoreUpdate(from: message)
+            
+        case "newPlayer":
+            self.handleNewPlayerFromWatch(message, context: context)
 
         default:
             print("⚠️ [WatchKit] 收到未知的 command: \(command)")
         }
+    }
+    // 新增处理函数
+    private func handleNewPlayerFromWatch(_ message: [String: Any], context: ModelContext) {
+        guard let name = message["name"] as? String,
+              let playerIdStr = message["playerId"] as? String,
+              let playerId = UUID(uuidString: playerIdStr),
+              let isHomeTeam = message["isHomeTeam"] as? Bool,
+              let matchIdStr = message["matchId"] as? String,
+              let matchId = UUID(uuidString: matchIdStr) else { return }
+        
+        // 1. 查找当前比赛
+        let matchPredicate = #Predicate<Match> { $0.id == matchId }
+        guard let match = (try? context.fetch(FetchDescriptor(predicate: matchPredicate)))?.first else { return }
+        
+        // 2. 创建新球员并关联到当前比赛和赛季
+        let newPlayer = Player(id: playerId, name: name, number: 0, position: .midfielder)
+        // 自动关联到比赛的赛季
+        newPlayer.seasons = match.season.map { [$0] }
+        context.insert(newPlayer)
+        
+        // 3. 创建比赛统计数据
+        let team: Team = isHomeTeam ? .home : .away
+        let stats = PlayerMatchStats(player: newPlayer, match: match, team: team)
+        match.playerStats.append(stats)
+        
+        try? context.save()
+        print("✅ 已同步手表创建的新球员: \(name)")
     }
 }

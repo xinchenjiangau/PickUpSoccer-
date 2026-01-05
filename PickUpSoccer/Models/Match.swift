@@ -15,6 +15,8 @@ final class Match {
     var homeScore: Int
     var awayScore: Int
     
+  
+    
     @Relationship var season: Season?
     @Relationship(deleteRule: .cascade) var events: [MatchEvent]
     @Relationship(deleteRule: .cascade) var playerStats: [PlayerMatchStats]

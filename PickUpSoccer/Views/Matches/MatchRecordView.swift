@@ -10,23 +10,20 @@ struct MatchRecordView: View {
     @EnvironmentObject var coordinator: NavigationCoordinator
     @Bindable var match: Match
     @State private var showingEventSelection = false
-    @State private var selectedTeamIsHome = true // Used to identify whether the home team or away team is selected
-    // @State private var shouldNavigateToMatches = false  // Used to control navigation back to MatchesView
+    @State private var selectedTeamIsHome = true
     @State private var currentTime = Date()
     @State private var showingAddPlayer = false
     @State private var showEndConfirmation = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var redTeamPlayers: [Player] {
-        match.playerStats.filter { $0.isHomeTeam }
+        match.playerStats.filter { $0.team == .home }
             .compactMap { $0.player }
-            .filter { !$0.isDeleted } // [新增] 过滤掉已删除的球员
     }
     
     var blueTeamPlayers: [Player] {
-        match.playerStats.filter { !$0.isHomeTeam }
+        match.playerStats.filter { $0.team == .away }
             .compactMap { $0.player }
-            .filter { !$0.isDeleted } // [新增] 过滤掉已删除的球员
     }
     
     var matchDuration: String {
@@ -36,16 +33,14 @@ struct MatchRecordView: View {
         return String(format: "%02d:%02d", minutes, seconds)
     }
     
-    // Calculate red team average score
     var redTeamAverageScore: Double {
-        let redTeamStats = match.playerStats.filter { $0.isHomeTeam }
+        let redTeamStats = match.playerStats.filter { $0.team == .home }
         guard !redTeamStats.isEmpty else { return 0 }
         return redTeamStats.reduce(0.0) { $0 + $1.score } / Double(redTeamStats.count)
     }
     
-    // Calculate blue team average score
     var blueTeamAverageScore: Double {
-        let blueTeamStats = match.playerStats.filter { !$0.isHomeTeam }
+        let blueTeamStats = match.playerStats.filter { $0.team == .away }
         guard !blueTeamStats.isEmpty else { return 0 }
         return blueTeamStats.reduce(0.0) { $0 + $1.score } / Double(blueTeamStats.count)
     }
@@ -60,7 +55,6 @@ struct MatchRecordView: View {
                     .foregroundColor(.black)
                     .padding(.top, 10)
                     .onReceive(timer) { _ in
-                        // Only update time if match is in progress
                         if match.status == .inProgress {
                             currentTime = Date()
                         }
@@ -92,7 +86,6 @@ struct MatchRecordView: View {
                 
                 // Score display
                 HStack(spacing: 30) {
-                    // Red team button
                     Button(action: {
                         selectedTeamIsHome = true
                         showingEventSelection = true
@@ -102,10 +95,7 @@ struct MatchRecordView: View {
                             .fontWeight(.semibold)
                             .foregroundColor(.black)
                             .frame(width: 100, height: 100)
-                            .background(
-                                Circle()
-                                    .fill(Color.red.opacity(0.5))
-                            )
+                            .background(Circle().fill(Color.red.opacity(0.5)))
                     }
                     
                     Text("-")
@@ -113,7 +103,6 @@ struct MatchRecordView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.black)
                     
-                    // Blue team button
                     Button(action: {
                         selectedTeamIsHome = false
                         showingEventSelection = true
@@ -123,25 +112,19 @@ struct MatchRecordView: View {
                             .fontWeight(.semibold)
                             .foregroundColor(.black)
                             .frame(width: 100, height: 100)
-                            .background(
-                                Circle()
-                                    .fill(Color.blue.opacity(0.5))
-                            )
+                            .background(Circle().fill(Color.blue.opacity(0.5)))
                     }
                 }
             }
             .padding(.vertical, 20)
             .background(Color.white)
             
-            
-            // Timeline Title
             Text("Timeline")
                 .font(.custom("PingFang MO", size: 24))
                 .fontWeight(.medium)
                 .foregroundColor(Color(red: 0.15, green: 0.50, blue: 0.27))
                 .padding(.vertical, 20)
             
-            // Timeline View
             TimelineView(match: match)
                 .frame(maxHeight: .infinity)
         }
@@ -170,16 +153,21 @@ struct MatchRecordView: View {
                 }
             }
         }
-        // .navigationDestination(isPresented: $shouldNavigateToMatches) {
-        //     MatchesView()
-        // }
         .sheet(isPresented: $showingEventSelection) {
             EventSelectionView(match: match, isHomeTeam: selectedTeamIsHome)
         }
-        
+        .sheet(isPresented: $showingAddPlayer) {
+            AddMatchPlayerView(match: match)
+        }
+        .alert("End Match?", isPresented: $showEndConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("End", role: .destructive) {
+                endMatch()
+            }
+        } message: {
+            Text("Are you sure you want to end this match? This action cannot be undone.")
+        }
         .onAppear {
-            
-            // Trigger a view refresh to ensure toolbar rendering
             _ = match.id
             WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
         }
@@ -191,28 +179,20 @@ struct MatchRecordView: View {
         }
     }
     
-    
-    
     private func endMatch() {
-        // Update match status
         match.status = .finished
-        
-        // MARK: - 根本问题修复
-        // 在保存比赛之前，调用函数来计算并更新所有的最终统计数据。
         match.updateMatchStats()
         
-        // Per your request, this is commented out.
-        // WatchConnectivityManager.shared.sendFullMatchEndToWatch(match: match)
-
-        // Notify MatchesView to close sheet
+        // [关键修复] 同步结束指令给手表
+        WatchConnectivityManager.shared.sendFullMatchEndToWatch(match: match)
+        
         coordinator.shouldDismissParticipationSheet = true
-
-        // Save the updated match object with correct stats and then dismiss.
         try? modelContext.save()
         dismiss()
     }
 }
 
+// TimelineEventView 保持不变
 struct TimelineEventView: View {
     let event: MatchEvent
     let isLastEvent: Bool
@@ -226,51 +206,40 @@ struct TimelineEventView: View {
     var eventDescription: String {
         switch event.eventType {
         case .goal:
-            // [修改] 安全访问逻辑
-            let scorerName = event.safeScorerName
-            
-            // 检查助攻者是否存在且未被删除
-            if let assistant = event.assistant, !assistant.isDeleted {
+            let scorerName = event.scorer?.name ?? "Unknown"
+            if let assistant = event.assistant {
                 return "\(scorerName) Goal!\nAssist: \(assistant.name)"
             } else {
                 return "\(scorerName) Goal!"
             }
         
         case .foul:
-            return "\(event.safeScorerName) Foul"
+            return "\(event.scorer?.name ?? "Unknown") Foul"
         case .save:
-            return "\(event.safeGoalkeeperName) Save" // 使用安全扩展
+            return "\(event.goalkeeper?.name ?? "Unknown") Save"
         case .yellowCard:
-            return "\(event.safeScorerName) Yellow Card"
+            return "\(event.scorer?.name ?? "Unknown") Yellow Card"
         case .redCard:
-            return "\(event.safeScorerName) Red Card"
+            return "\(event.scorer?.name ?? "Unknown") Red Card"
         }
     }
     
     var eventColor: Color {
         switch event.eventType {
-        case .goal:
-            return .yellow
-        
-        case .foul:
-            return .orange
-        case .save:
-            return .blue
-        case .yellowCard:
-            return .yellow
-        case .redCard:
-            return .red
+        case .goal: return .yellow
+        case .foul: return .orange
+        case .save: return .blue
+        case .yellowCard: return .yellow
+        case .redCard: return .red
         }
     }
     
     var body: some View {
         HStack(alignment: .top, spacing: 15) {
-            // Time display
             Text(eventTimeString)
                 .font(.custom("DingTalk JinBuTi", size: 14))
                 .foregroundColor(.black)
             
-            // Timeline
             VStack(spacing: 0) {
                 Circle()
                     .fill(eventColor)
@@ -284,7 +253,6 @@ struct TimelineEventView: View {
                 }
             }
             
-            // Event content
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Image(systemName: event.eventType == .goal ? "soccerball" : "hand.raised.fill")
@@ -304,18 +272,4 @@ struct TimelineEventView: View {
         }
         .padding(.horizontal)
     }
-}
-
-#Preview {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Match.self, configurations: config)
-    
-    let newMatch = Match(
-        id: UUID(),
-        status: .notStarted,
-        homeTeamName: "Red Team",
-        awayTeamName: "Blue Team"
-    )
-    return MatchRecordView(match: newMatch)
-        .modelContainer(container)
 }

@@ -13,6 +13,10 @@ struct TeamSelectView: View {
     @State private var blueTeamAverageScore: Double = 0
     @EnvironmentObject var coordinator: NavigationCoordinator
     
+    // 获取环境中的赛季ID (如果有)
+    @Environment(\.selectedSeasonID) var selectedSeasonID
+    @Query private var seasons: [Season]
+    
     var redTeam: [Player] {
         selectedPlayers.filter { playerColors[$0.id] == .red }
     }
@@ -100,6 +104,16 @@ struct TeamSelectView: View {
             awayTeamName: "蓝队"
         )
         
+        // 关联赛季逻辑 (保持与 ConfirmationView 一致)
+        if let seasonID = selectedSeasonID,
+           let targetSeason = seasons.first(where: { $0.id == seasonID }) {
+            newMatch.season = targetSeason
+        } else {
+            if let current = seasons.first(where: { $0.isCurrent }) {
+                newMatch.season = current
+            }
+        }
+        
         // 初始化比分
         newMatch.homeScore = 0
         newMatch.awayScore = 0
@@ -108,25 +122,27 @@ struct TeamSelectView: View {
         newMatch.events = []
         newMatch.playerStats = []
         
+        // 保存到数据库 (先插入以确保关联正常)
+        modelContext.insert(newMatch)
+        
         // 为每个球员创建比赛统计
         for player in redTeam {
-            let stats = PlayerMatchStats(player: player, match: newMatch)
-            stats.isHomeTeam = true
+            // [修复点] 这里红队对应 .home，且必须传入 team 参数
+            let stats = PlayerMatchStats(player: player, match: newMatch, team: .home)
             newMatch.playerStats.append(stats)
         }
         
         for player in blueTeam {
-            let stats = PlayerMatchStats(player: player, match: newMatch)
-            stats.isHomeTeam = false
+            // [修复点] 这里蓝队对应 .away，且必须传入 team 参数
+            let stats = PlayerMatchStats(player: player, match: newMatch, team: .away)
             newMatch.playerStats.append(stats)
         }
-        
-        // 保存到数据库
-        modelContext.insert(newMatch)
         
         // 保存当前比赛并显示比赛记录页面
         currentMatch = newMatch
         showingMatchRecord = true
+        
+        try? modelContext.save()
     }
     
     private func togglePlayerColor(_ player: Player) {
@@ -168,8 +184,8 @@ struct TeamSelectView: View {
     /// 按评分均衡分队（贪心算法）
     func balancedTeams(players: [Player], season: Season?) -> ([Player], [Player]) {
         // 1. 按评分排序
-        let sortedPlayers = players.sorted { 
-            $0.averageScoreForSeason(season) > $1.averageScoreForSeason(season) 
+        let sortedPlayers = players.sorted {
+            $0.averageScoreForSeason(season) > $1.averageScoreForSeason(season)
         }
         
         let teamSize = players.count / 2
@@ -233,4 +249,4 @@ extension Array {
 
 #Preview {
     TeamSelectView(selectedPlayers: [Player(name: "球员1", position: .forward), Player(name: "球员2", position: .midfielder)])
-} 
+}

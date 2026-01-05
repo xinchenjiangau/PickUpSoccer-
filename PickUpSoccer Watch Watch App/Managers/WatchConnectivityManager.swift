@@ -269,7 +269,7 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
     }
 
 
-    func sendNewPlayerToWatch(player: WatchPlayer, isHomeTeam: Bool, matchId: UUID) {
+    func sendNewPlayerToPhone(player: WatchPlayer, isHomeTeam: Bool, matchId: UUID) {
         let payload: [String: Any] = [
             "command": "newPlayer",
             "playerId": player.playerId.uuidString,

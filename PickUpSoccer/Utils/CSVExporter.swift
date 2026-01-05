@@ -1,4 +1,6 @@
 import Foundation
+import SwiftData
+import UniformTypeIdentifiers
 
 struct CSVExporter {
     
@@ -17,8 +19,8 @@ struct CSVExporter {
         var csv = header
         
         for player in players {
-            // 基础防崩溃过滤
-            guard !player.isDeleted else { continue }
+            // [修复] 使用 isArchived 替代 isDeleted (根据您的模型定义)
+            guard !player.isArchived else { continue }
             
             // 计算统计数据
             let totalGoals = player.totalGoals
@@ -28,15 +30,16 @@ struct CSVExporter {
             let avgScore = String(format: "%.1f", player.averageScoreForSeason(nil))
             let mvpCount = player.mvpCountForSeason(nil)
             
+            // [修复] 使用字符串插值 \(player.id) 替代 .uuidString，兼容 UUID 和 PersistentIdentifier
             let row = [
-                player.id.uuidString,
-                "\"\(player.name)\"", // 加引号防止名字含逗号破坏格式
+                "\(player.id)",
+                escapeCSV(player.name), // 加引号防止名字含逗号破坏格式
                 "\(player.number ?? 0)",
                 player.position.rawValue,
-                player.phone ?? "",
-                player.email ?? "",
+                escapeCSV(player.phone ?? ""),
+                escapeCSV(player.email ?? ""),
                 "\(player.age ?? 0)",
-                player.gender ?? "",
+                escapeCSV(player.gender ?? ""),
                 "\(player.height ?? 0)",
                 "\(player.weight ?? 0)",
                 // --- 新增数据 ---
@@ -62,24 +65,28 @@ struct CSVExporter {
             // 安全获取名字的闭包（必须在白名单内才读取）
             let getSafeName: (Player?) -> String = { p in
                 if let player = p, validPlayerSet.contains(ObjectIdentifier(player)) {
-                    return "\"\(player.name)\""
+                    return escapeCSV(player.name)
                 }
                 return ""
             }
             
+            // 处理 Season ID，如果为空则为空字符串
+            let seasonIdStr = match.season.map { "\($0.id)" } ?? ""
+            
+            // [修复] 使用 \(match.id)
             let row = [
-                match.id.uuidString,
+                "\(match.id)",
                 match.status.rawValue,
-                match.homeTeamName,
-                match.awayTeamName,
+                escapeCSV(match.homeTeamName),
+                escapeCSV(match.awayTeamName),
                 formatter.string(from: match.matchDate),
-                match.location ?? "",
-                match.weather ?? "",
-                match.referee ?? "",
+                escapeCSV(match.location ?? ""),
+                escapeCSV(match.weather ?? ""),
+                escapeCSV(match.referee ?? ""),
                 "\(match.duration ?? 0)",
                 "\(match.homeScore)",
                 "\(match.awayScore)",
-                match.season?.id.uuidString ?? "",
+                seasonIdStr,
                 // --- 新增数据 ---
                 getSafeName(match.mvp),
                 getSafeName(match.topScorer),
@@ -102,8 +109,8 @@ struct CSVExporter {
             let playerName: String
             
             if let player = stat.player, validPlayerSet.contains(ObjectIdentifier(player)) {
-                playerId = player.id.uuidString
-                playerName = "\"\(player.name)\""
+                playerId = "\(player.id)"
+                playerName = escapeCSV(player.name)
             } else {
                 playerId = ""
                 playerName = "未知/已删除"
@@ -111,12 +118,19 @@ struct CSVExporter {
 
             let scoreStr = String(format: "%.1f", stat.score)
             
+            // 判断主队 (根据您最新的 Team 枚举修改)
+            let isHome = (stat.team == .home) ? "1" : "0"
+            
+            // 处理比赛ID
+            let matchIdStr = stat.match.map { "\($0.id)" } ?? ""
+            
+            // [修复] 使用 \(stat.id)
             let row = [
-                stat.id.uuidString,
+                "\(stat.id)",
                 playerId,
                 playerName,
-                stat.match?.id.uuidString ?? "",
-                stat.isHomeTeam ? "1" : "0",
+                matchIdStr,
+                isHome,
                 "\(stat.goals)",
                 "\(stat.assists)",
                 "\(stat.saves)",
@@ -139,17 +153,20 @@ struct CSVExporter {
         for event in events {
             let getSafeID: (Player?) -> String = { p in
                 if let player = p, validPlayerSet.contains(ObjectIdentifier(player)) {
-                    return player.id.uuidString
+                    return "\(player.id)"
                 }
                 return ""
             }
             
+            let matchIdStr = event.match.map { "\($0.id)" } ?? ""
+            
+            // [修复] 使用 \(event.id)
             let row = [
-                event.id.uuidString,
+                "\(event.id)",
                 event.eventType.rawValue,
                 formatter.string(from: event.timestamp),
                 event.isHomeTeam ? "1" : "0",
-                event.match?.id.uuidString ?? "",
+                matchIdStr,
                 getSafeID(event.scorer),
                 getSafeID(event.assistant),
                 getSafeID(event.goalkeeper) // --- 新增门将 ---
@@ -210,11 +227,11 @@ struct CSVExporter {
             let bestReceiverCount = bestReceiverStat?.value ?? 0
             
             let row = [
-                player.id.uuidString,
-                "\"\(player.name)\"",
-                "\"\(bestProviderName)\"",
+                "\(player.id)",
+                escapeCSV(player.name),
+                escapeCSV(bestProviderName),
                 "\(bestProviderCount)",
-                "\"\(bestReceiverName)\"",
+                escapeCSV(bestReceiverName),
                 "\(bestReceiverCount)"
             ].joined(separator: ",")
             csv += row + "\n"
@@ -236,12 +253,21 @@ struct CSVExporter {
             return nil
         }
     }
+    
+    // 辅助：处理 CSV 特殊字符
+    private static func escapeCSV(_ text: String) -> String {
+        if text.contains(",") || text.contains("\"") || text.contains("\n") {
+            let escaped = text.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        }
+        return text
+    }
 
     // MARK: - 6. 🚀 终极一键导出 (生成 URL 数组)
     // 这是 UI 层实现“一次性分享所有文件”的关键接口
     static func exportAllDataToURLs(players: [Player], matches: [Match]) -> [URL] {
-        // [关键] 1. 过滤已删除球员
-        let validPlayers = players.filter { !$0.isDeleted }
+        // [关键] 1. 过滤已删除球员 (使用 isArchived)
+        let validPlayers = players.filter { !$0.isArchived }
         // [关键] 2. 创建白名单 (Crash Protection)
         let validPlayerSet = createSafePlayerSet(validPlayers)
         
@@ -273,7 +299,7 @@ struct CSVExporter {
     
     // 兼容旧接口 (如果其他地方还在用)
     static func exportAllData(players: [Player], matches: [Match]) -> [String: String] {
-        let validPlayers = players.filter { !$0.isDeleted }
+        let validPlayers = players.filter { !$0.isArchived }
         let validPlayerSet = createSafePlayerSet(validPlayers)
         let allStats = validPlayers.flatMap { $0.matchStats.filter { $0.match != nil } }
         let allEvents = matches.flatMap { $0.events }

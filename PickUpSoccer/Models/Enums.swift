@@ -22,3 +22,8 @@ enum EventType: String, Codable {
     case yellowCard = "黄牌"
     case redCard = "红牌"
 } 
+
+enum Team: String, Codable, CaseIterable {
+    case home = "Home"
+    case away = "Away"
+}

@@ -2,206 +2,136 @@ import SwiftUI
 import SwiftData
 
 struct LeaderboardView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var players: [Player]
-    @Query private var matchStats: [PlayerMatchStats]
-    @State private var selectedTab = 0
+    // 查询未归档的球员
+    @Query(filter: #Predicate<Player> { $0.isArchived == false })
+    private var players: [Player]
     
-    // 进球排行
-    var goalScorers: [(player: Player, goals: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
-            .mapValues { stats in
-                stats.reduce(0) { $0 + $1.goals }
-            }
-        return players.map { player in
-            (player: player, goals: playerStats[player] ?? 0)
-        }
-        .sorted { $0.goals > $1.goals }
-    }
+    // 查询赛季用于筛选
+    @Query(sort: \Season.endDate, order: .reverse)
+    private var seasons: [Season]
     
-    // 助攻排行
-    var assistLeaders: [(player: Player, assists: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
-            .mapValues { stats in
-                stats.reduce(0) { $0 + $1.assists }
-            }
-        return players.map { player in
-            (player: player, assists: playerStats[player] ?? 0)
-        }
-        .sorted { $0.assists > $1.assists }
-    }
-    
-    // 扑救排行
-    var saveLeaders: [(player: Player, saves: Int)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
-            .mapValues { stats in
-                stats.reduce(0) { $0 + $1.saves }
-            }
-        return players.map { player in
-                (player: player, saves: playerStats[player] ?? 0)
-            }
-            .sorted { $0.saves > $1.saves }
-    }
-    
-    // 评分榜
-    var scoreLeaders: [(player: Player, averageScore: Double)] {
-        let playerStats = Dictionary(grouping: matchStats, by: { $0.player! })
-        return players.map { player in
-            let stats = playerStats[player] ?? []
-            let avg = stats.isEmpty ? 0 : stats.map { $0.score }.reduce(0, +) / Double(stats.count)
-            return (player: player, averageScore: avg)
-        }
-        .sorted { $0.averageScore > $1.averageScore }
-    }
-    
-    // 标题数据
-    private let titles = ["进球榜", "助攻榜", "扑救榜", "评分榜"]
+    @State private var selectedSeason: Season?
+    @State private var selectedTab = 0 // 0: 进球, 1: 助攻, 2: MVP, 3: 扑救
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
-                // 标题栏
-                HStack {
-                    ForEach(0..<4) { index in
-                        Button(action: {
-                            withAnimation {
-                                selectedTab = index
+                // 1. 赛季选择器 (横向滚动)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        Button(action: { selectedSeason = nil }) {
+                            Text("全部")
+                                .font(.subheadline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(selectedSeason == nil ? Color.black : Color.gray.opacity(0.1))
+                                .foregroundColor(selectedSeason == nil ? .white : .primary)
+                                .cornerRadius(20)
+                        }
+                        
+                        ForEach(seasons) { season in
+                            Button(action: { selectedSeason = season }) {
+                                Text(season.name)
+                                    .font(.subheadline)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(selectedSeason?.id == season.id ? Color.black : Color.gray.opacity(0.1))
+                                    .foregroundColor(selectedSeason?.id == season.id ? .white : .primary)
+                                    .cornerRadius(20)
                             }
-                        }) {
-                            Text(["进球榜", "助攻榜", "扑救榜", "评分榜"][index])
-                                .foregroundColor(selectedTab == index ? .black : .gray)
-                                .padding(.vertical, 10)
-                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding()
+                }
+                .background(Color.white)
+                
+                // 2. 统计维度选择
+                Picker("统计项", selection: $selectedTab) {
+                    Text("进球").tag(0)
+                    Text("助攻").tag(1)
+                    Text("MVP").tag(2)
+                    Text("扑救").tag(3)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+                
+                // 3. 榜单列表
+                List {
+                    ForEach(sortedPlayers) { player in
+                        HStack {
+                            // 排名
+                            Text("\(rank(of: player))")
+                                .font(.headline)
+                                .italic()
+                                .frame(width: 30)
+                                .foregroundColor(.secondary)
+                            
+                            // 头像
+                            if let url = player.profilePicture,
+                               let uiImage = UIImage(contentsOfFile: url.path) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 40, height: 40)
+                                    .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.circle.fill")
+                                    .resizable()
+                                    .frame(width: 40, height: 40)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            // 名字
+                            Text(player.name)
+                                .fontWeight(.medium)
+                            
+                            Spacer()
+                            
+                            // 数值
+                            Text("\(value(for: player))")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundColor(.blue)
                         }
                     }
                 }
-                .padding(.horizontal)
-                
-                // 排行榜内容
-                TabView(selection: $selectedTab) {
-                    // 进球榜
-                    LeaderboardTabView(
-                        title: "进球榜",
-                        items: goalScorers.map { (player: $0.player, value: $0.goals) },
-                        valueLabel: "进球",
-                        getValue: { $0 }
-                    )
-                    .tag(0)
-                    
-                    // 助攻榜
-                    LeaderboardTabView(
-                        title: "助攻榜",
-                        items: assistLeaders.map { (player: $0.player, value: $0.assists) },
-                        valueLabel: "助攻",
-                        getValue: { $0 }
-                    )
-                    .tag(1)
-                    
-                    // 扑救榜
-                    LeaderboardTabView(
-                        title: "扑救榜",
-                        items: saveLeaders.map { (player: $0.player, value: $0.saves) },
-                        valueLabel: "扑救",
-                        getValue: { $0 }
-                    )
-                    .tag(2)
-                    
-                    // 评分榜
-                    LeaderboardScoreTabView(
-                        title: "评分榜",
-                        items: scoreLeaders,
-                        valueLabel: "场均评分"
-                    )
-                    .tag(3)
-                }
-                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                .listStyle(.plain)
             }
             .navigationTitle("排行榜")
-            .navigationBarTitleDisplayMode(.large)
+            .onAppear {
+                // 默认选中当前赛季
+                if selectedSeason == nil {
+                    selectedSeason = seasons.first(where: { $0.isCurrent })
+                }
+            }
         }
     }
-}
-
-// 排行榜标签页视图
-struct LeaderboardTabView<T: BinaryInteger>: View {
-    let title: String
-    let items: [(player: Player, value: T)]
-    let valueLabel: String
-    let getValue: (T) -> T
     
-    var body: some View {
-        List {
-            ForEach(Array(items.enumerated()), id: \.element.player.id) { index, item in
-                HStack {
-                    // 排名
-                    Text("\(index + 1)")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                        .frame(width: 30)
-                    
-                    // 球员信息
-                    VStack(alignment: .leading) {
-                        Text(item.player.name)
-                            .font(.headline)
-                        Text(item.player.position.rawValue)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    Spacer()
-                    
-                    // 数据
-                    HStack {
-                        Text("\(getValue(item.value))")
-                            .font(.headline)
-                            .foregroundColor(.blue)
-                        Text(valueLabel)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-                .padding(.vertical, 4)
+    // 根据选中项排序
+    private var sortedPlayers: [Player] {
+        players
+            .map { player -> (Player, Int) in
+                (player, value(for: player))
             }
+            .filter { $0.1 > 0 } // 只显示数值大于0的球员
+            .sorted { $0.1 > $1.1 } // 降序
+            .map { $0.0 }
+    }
+    
+    // 获取当前Tab对应的数值 (使用 Player 扩展方法)
+    private func value(for player: Player) -> Int {
+        switch selectedTab {
+        case 0: return player.goals(in: selectedSeason)
+        case 1: return player.assists(in: selectedSeason)
+        case 2: return player.mvpCountForSeason(selectedSeason) // 这里用回你之前定义的，或者用stats计算
+        case 3: return player.saves(in: selectedSeason)
+        default: return 0
         }
     }
-}
-
-struct LeaderboardScoreTabView: View {
-    let title: String
-    let items: [(player: Player, averageScore: Double)]
-    let valueLabel: String
-
-    var body: some View {
-        List {
-            ForEach(Array(items.enumerated()), id: \.element.player.id) { index, item in
-                HStack {
-                    Text("\(index + 1)")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                        .frame(width: 30)
-                    VStack(alignment: .leading) {
-                        Text(item.player.name)
-                            .font(.headline)
-                        Text(item.player.position.rawValue)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    HStack {
-                        Text(String(format: "%.2f", item.averageScore))
-                            .font(.headline)
-                            .foregroundColor(.orange)
-                        Text(valueLabel)
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-        }
+    
+    private func rank(of player: Player) -> Int {
+        guard let index = sortedPlayers.firstIndex(where: { $0.id == player.id }) else { return 0 }
+        return index + 1
     }
 }
-
-#Preview {
-    LeaderboardView()
-} 

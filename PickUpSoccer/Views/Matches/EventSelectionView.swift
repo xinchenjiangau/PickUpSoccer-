@@ -12,7 +12,9 @@ struct EventSelectionView: View {
     @State private var currentScorer: Player? // 临时存储进球球员
     
     var selectedTeamPlayers: [Player] {
-        match.playerStats.filter { $0.isHomeTeam == isHomeTeam }.compactMap { $0.player }
+        match.playerStats.filter {
+            let statsIsHome = ($0.team == .home)
+            return statsIsHome == isHomeTeam}.compactMap { $0.player }
     }
     
     // 添加计算属性用于调试

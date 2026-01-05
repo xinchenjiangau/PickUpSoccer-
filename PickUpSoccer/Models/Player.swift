@@ -17,10 +17,10 @@ final class Player {
     var appleUserID: String?
     var nickname: String?
     
-    // 软删除标记 (之前添加的功能)
+    // 软删除标记
     var isArchived: Bool = false
     
-    // 赛季关联 (之前添加的功能)
+    // 赛季关联
     var seasons: [Season]? = []
     
     @Relationship(deleteRule: .cascade) var matchStats: [PlayerMatchStats]
@@ -61,18 +61,16 @@ final class Player {
         }
     }
     
-    // MARK: - 扩展功能 (移入类内部以解决找不到成员的报错)
+    // MARK: - 扩展功能
     
     /// 判断资料是否完整
     var isProfileComplete: Bool {
-        // 这里假设 name 默认值可能为 "新用户"
         return name != "新用户" && number != nil && profilePicture != nil
     }
 
     /// 获取某赛季所有比赛评分
     func scoresForSeason(_ season: Season?) -> [Double] {
         let stats = matchStats.filter {
-            // 如果 season 为 nil，返回所有；否则匹配 ID
             season == nil || $0.match?.season?.id == season?.id
         }
         return stats.map { $0.score }
@@ -96,12 +94,22 @@ final class Player {
         return scores.reduce(0, +) / Double(scores.count)
     }
 
-    /// MVP场次（单场评分≥8.0的场次）
+    // MARK: - 关键修复：MVP 统计逻辑
+    /// MVP场次（统计 match.mvp 是自己的次数）
     func mvpCountForSeason(_ season: Season?) -> Int {
-        scoresForSeason(season).filter { $0 >= 8.0 }.count
+        // 1. 获取该球员在该赛季的所有比赛统计
+        let seasonStats = stats(in: season)
+        
+        // 2. 筛选出那些“比赛的MVP记录是自己”的场次
+        let mvpMatches = seasonStats.filter { stat in
+            guard let match = stat.match, let matchMvp = match.mvp else { return false }
+            return matchMvp.id == self.id
+        }
+        
+        return mvpMatches.count
     }
     
-    // MARK: - 统计辅助方法 (解决 LeaderboardView 报错)
+    // MARK: - 统计辅助方法
     
     /// 获取特定赛季的比赛统计
     func stats(in season: Season?) -> [PlayerMatchStats] {

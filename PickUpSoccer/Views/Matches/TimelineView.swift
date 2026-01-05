@@ -2,7 +2,6 @@ import SwiftUI
 
 struct TimelineView: View {
     @Bindable var match: Match
-    //let match: Match
     
     // 定义UI常量
     private let eventUnitHeight: CGFloat = 50  // 事件卡片固定高度
@@ -39,13 +38,11 @@ struct TimelineView: View {
                     ForEach(Array(sortedEvents.enumerated()), id: \.element.id) { index, event in
                         let yPosition = CGFloat(index) * (eventUnitHeight + eventSpacing)
                         
-                        // 主队事件（左侧）
-                        // 修正后的代码
-                        // MARK: - 逻辑修正: 同时检查 scorer 和 goalkeeper
-                        let playerForEvent = event.scorer ?? event.goalkeeper
-                        if let player = playerForEvent,
-                           let stats = match.playerStats.first(where: { $0.player?.id == player.id }),
-                           stats.isHomeTeam {
+                        // [关键修复] 直接使用 event.isHomeTeam 判断左右
+                        // 不再依赖查找 playerStats，避免了访问已删除球员导致的崩溃
+                        
+                        // --- 主队事件（左侧）---
+                        if event.isHomeTeam {
                             HStack {
                                 EventCard(event: event, isHomeTeam: true)
                                     .frame(height: eventUnitHeight)
@@ -57,18 +54,13 @@ struct TimelineView: View {
                                     y: yPosition + eventUnitHeight / 2)
                         }
                         
-                        // 时间点
+                        // --- 时间点 ---
                         TimelinePoint(event: event)
                             .position(x: UIScreen.main.bounds.width / 2,
                                     y: yPosition + eventUnitHeight / 2)
                         
-                        // 客队事件（右侧）
-                        // 修正后的代码
-                        // MARK: - 逻辑修正: 同时检查 scorer 和 goalkeeper
-                        
-                        if let player = playerForEvent,
-                           let stats = match.playerStats.first(where: { $0.player?.id == player.id }),
-                           !stats.isHomeTeam {
+                        // --- 客队事件（右侧）---
+                        if !event.isHomeTeam {
                             HStack {
                                 Spacer()
                                 EventCard(event: event, isHomeTeam: false)
@@ -150,10 +142,13 @@ struct EventCard: View {
     
     private var eventContent: some View {
         VStack(alignment: isHomeTeam ? .trailing : .leading) {
+            // [关键修复] 使用 safeScorerName 等安全属性
             Text(getEventDescription())
                 .font(.subheadline)
-            if let assistant = event.assistant {
-                Text("助攻：\(assistant.name)")
+            
+            // [关键修复] 安全访问助攻者
+            if let assistant = event.assistant, !assistant.isDeleted {
+                Text("助攻：\(assistant.safeName)")
                     .font(.caption)
                     .foregroundColor(.gray)
             }
@@ -164,19 +159,23 @@ struct EventCard: View {
     }
     
     private func getEventDescription() -> String {
+        // [关键修复] 所有的名字访问都必须经过安全检查
+        // 这里假设我们在 Match+Extensions.swift 里加了 safeScorerName 等扩展
+        // 如果没有，这里用 inline 的 safeName 替代
+        
         switch event.eventType {
         case .goal:
-            return "\(event.scorer?.name ?? "") 进球！"
+            return "\(event.safeScorerName) 进球！"
         case .save:
-            return "\(event.goalkeeper?.name ?? "") 扑救"
+            return "\(event.safeGoalkeeperName) 扑救"
 //        case .assist:
-//            return "\(event.scorer?.name ?? "") 助攻"
+//            return "\(event.safeScorerName) 助攻"
         case .foul:
-            return "\(event.scorer?.name ?? "") 犯规"
+            return "\(event.safeScorerName) 犯规"
         case .yellowCard:
-            return "\(event.scorer?.name ?? "") 黄牌"
+            return "\(event.safeScorerName) 黄牌"
         case .redCard:
-            return "\(event.scorer?.name ?? "") 红牌"
+            return "\(event.safeScorerName) 红牌"
         }
     }
 }
@@ -188,5 +187,4 @@ struct EventHeightPreferenceKey: PreferenceKey {
     static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
         value.merge(nextValue()) { _, new in new }
     }
-} 
-    
+}

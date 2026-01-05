@@ -18,11 +18,15 @@ struct MatchRecordView: View {
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var redTeamPlayers: [Player] {
-        match.playerStats.filter { $0.isHomeTeam }.compactMap { $0.player }
+        match.playerStats.filter { $0.isHomeTeam }
+            .compactMap { $0.player }
+            .filter { !$0.isDeleted } // [新增] 过滤掉已删除的球员
     }
     
     var blueTeamPlayers: [Player] {
-        match.playerStats.filter { !$0.isHomeTeam }.compactMap { $0.player }
+        match.playerStats.filter { !$0.isHomeTeam }
+            .compactMap { $0.player }
+            .filter { !$0.isDeleted } // [新增] 过滤掉已删除的球员
     }
     
     var matchDuration: String {
@@ -222,20 +226,24 @@ struct TimelineEventView: View {
     var eventDescription: String {
         switch event.eventType {
         case .goal:
-            if let assistant = event.assistant {
-                return "\(event.scorer?.name ?? "") Goal!\nAssist: \(assistant.name)"
+            // [修改] 安全访问逻辑
+            let scorerName = event.safeScorerName
+            
+            // 检查助攻者是否存在且未被删除
+            if let assistant = event.assistant, !assistant.isDeleted {
+                return "\(scorerName) Goal!\nAssist: \(assistant.name)"
             } else {
-                return "\(event.scorer?.name ?? "") Goal!"
+                return "\(scorerName) Goal!"
             }
         
         case .foul:
-            return "\(event.scorer?.name ?? "") Foul"
+            return "\(event.safeScorerName) Foul"
         case .save:
-            return "\(event.goalkeeper?.name ?? "") Save" // Changed to event.goalkeeper
+            return "\(event.safeGoalkeeperName) Save" // 使用安全扩展
         case .yellowCard:
-            return "\(event.scorer?.name ?? "") Yellow Card"
+            return "\(event.safeScorerName) Yellow Card"
         case .redCard:
-            return "\(event.scorer?.name ?? "") Red Card"
+            return "\(event.safeScorerName) Red Card"
         }
     }
     

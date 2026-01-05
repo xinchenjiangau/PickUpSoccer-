@@ -2,25 +2,28 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+// 1. 新增：定义一个遵循 Identifiable 的结构体来驱动弹窗
+// 这确保了弹窗弹出时，数据（urls）一定已经准备好了
+struct ShareData: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+}
 
 struct PlayerListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Player.number) private var players: [Player]
     @Query private var matches: [Match]
+    
+    // MARK: - State Properties
     @State private var showingAddPlayer = false
-    @State private var showingExportSheet = false
+    @State private var showingExportSheet = false // 用于单个球员列表导出
     @State private var showingImportSheet = false
     @State private var csvString: String = ""
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var exportZipURL: URL? = nil
-    @State private var exportFileName: String = ""
-    @State private var exportFileContent: String = ""
-    @State private var showExportFile: Bool = false
-    @State private var showShareSheet = false
-    @State private var shareURL: URL? = nil
-    @State private var exportFiles: [(name: String, content: String)] = []
-    @State private var exportFileIndex: Int = 0
+    
+    // 2. 修改：使用 shareData 替换原来的 Bool 和 Array，防止状态不同步
+    @State private var shareData: ShareData?
     
     var body: some View {
         List {
@@ -45,16 +48,18 @@ struct PlayerListView: View {
                         Label("添加球员", systemImage: "person.badge.plus")
                     }
                     
+                    // 导出单个球员名单
                     Button(action: exportPlayerData) {
-                        Label("导出球员", systemImage: "square.and.arrow.up")
+                        Label("导出球员列表", systemImage: "doc.text")
                     }
                     
                     Button(action: { showingImportSheet = true }) {
                         Label("导入数据", systemImage: "square.and.arrow.down")
                     }
                     
+                    // 导出全部数据
                     Button(action: exportAllData) {
-                        Label("导出全部数据", systemImage: "archivebox")
+                        Label("导出全部数据", systemImage: "square.and.arrow.up")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -64,6 +69,7 @@ struct PlayerListView: View {
         .sheet(isPresented: $showingAddPlayer) {
             AddPlayerView(isPresented: $showingAddPlayer)
         }
+        // 单个文件导出 (球员列表)
         .fileExporter(
             isPresented: $showingExportSheet,
             document: CSVFile(initialText: csvString),
@@ -73,12 +79,11 @@ struct PlayerListView: View {
             switch result {
             case .success(let url):
                 print("成功导出到: \(url)")
-                self.shareURL = url
-                self.showShareSheet = true
             case .failure(let error):
                 print("导出失败: \(error.localizedDescription)")
             }
         }
+        // 导入文件
         .fileImporter(
             isPresented: $showingImportSheet,
             allowedContentTypes: [.commaSeparatedText]
@@ -96,21 +101,10 @@ struct PlayerListView: View {
         } message: {
             Text(errorMessage)
         }
-        .sheet(isPresented: $showShareSheet) {
-            if let url = shareURL {
-                ShareSheet(activityItems: [url])
-            }
-        }
-        .fileExporter(
-            isPresented: $showExportFile,
-            document: CSVFile(initialText: exportFiles.indices.contains(exportFileIndex) ? exportFiles[exportFileIndex].content : ""),
-            contentType: .commaSeparatedText,
-            defaultFilename: exportFiles.indices.contains(exportFileIndex) ? exportFiles[exportFileIndex].name : "data.csv"
-        ) { result in
-            exportFileIndex += 1
-            if exportFileIndex < exportFiles.count {
-                showExportFile = true
-            }
+        // 3. 修改：使用 item: $shareData 形式
+        // 只有当 shareData 被赋值时，这里才会运行，并且 data 保证是有值的
+        .sheet(item: $shareData) { data in
+            ShareSheet(activityItems: data.urls)
         }
     }
     
@@ -128,11 +122,13 @@ struct PlayerListView: View {
         }
     }
     
+    // 导出单个球员列表
     private func exportPlayerData() {
         csvString = CSVExporter.exportPlayers(players)
         showingExportSheet = true
     }
     
+    // 导入
     private func importCSV(from url: URL) {
         guard url.startAccessingSecurityScopedResource() else {
             errorMessage = "无法访问选择的文件"
@@ -160,13 +156,22 @@ struct PlayerListView: View {
         }
     }
     
+    // 4. 修改：导出全部数据逻辑
     private func exportAllData() {
-        let csvFilesDict = CSVExporter.exportAllData(players: players, matches: matches)
-        exportFiles = csvFilesDict.map { (key, value) in (name: key, content: value) }
-        exportFileIndex = 0
-        showExportFile = !exportFiles.isEmpty
+        let urls = CSVExporter.exportAllDataToURLs(players: players, matches: matches)
+        
+        if urls.isEmpty {
+            errorMessage = "没有可导出的数据"
+            showError = true
+            return
+        }
+        
+        // 直接赋值 shareData，这将自动触发 sheet
+        self.shareData = ShareData(urls: urls)
     }
 }
+
+// MARK: - Helper Structs
 
 struct CSVFile: FileDocument {
     static var readableContentTypes = [UTType.commaSeparatedText]
@@ -195,15 +200,19 @@ struct CSVFile: FileDocument {
     }
 }
 
+// 封装系统分享控制器
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
+    
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        return controller
     }
+    
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 #Preview {
     PlayerListView()
         .modelContainer(for: Player.self, inMemory: true)
-} 
+}

@@ -88,15 +88,33 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             return
         }
         
+        // 提前解析 matchId，用于判断是否是重复指令
+        guard let matchIdString = payload["matchId"] as? String,
+              let matchId = UUID(uuidString: matchIdString) else {
+            print("❌ Watch: 无法解析 startMatch 中的 matchId")
+            return
+        }
+        
         let modelContext = self.modelContainer.mainContext
         
-        // 1. 开始新比赛前，先清理掉所有旧数据
-        try? modelContext.delete(model: WatchMatchSession.self)
+        // MARK: - 🔴 修复核心：检查是否已经是当前正在进行的比赛
+        // 获取当前手表里存储的比赛会话
+        let existingSession = try? modelContext.fetch(FetchDescriptor<WatchMatchSession>()).first
         
-        // 2. 解析收到的比赛数据
-        guard let matchIdString = payload["matchId"] as? String,
-              let matchId = UUID(uuidString: matchIdString),
-              let homeTeamName = payload["homeTeamName"] as? String,
+        if let currentSession = existingSession {
+            if currentSession.matchId == matchId {
+                print("⚠️ Watch: 检测到重复的开始指令，比赛 \(matchId) 已在进行中，跳过重置操作。")
+                return // 直接返回，保护现有数据不被清空
+            } else {
+                print("🔄 Watch: 检测到新的比赛 ID，正在清理旧比赛数据...")
+                // 如果 ID 不一样，说明确实换了一场比赛，此时才执行清理
+                try? modelContext.delete(model: WatchMatchSession.self)
+            }
+        }
+        
+        // --- 以下逻辑保持不变 ---
+        
+        guard let homeTeamName = payload["homeTeamName"] as? String,
               let awayTeamName = payload["awayTeamName"] as? String,
               let playersData = payload["players"] as? [[String: Any]] else {
             print("WatchConnectivityManager: Failed to parse start match payload.")

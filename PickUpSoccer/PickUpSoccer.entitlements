@@ -7,7 +7,9 @@
 		<string>Default</string>
 	</array>
 	<key>com.apple.developer.associated-domains</key>
-	<array/>
+	<array>
+		<string>group.com.YingJu.PickUpSoccer</string>
+	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.YingJu.PickUpSoccer</string>

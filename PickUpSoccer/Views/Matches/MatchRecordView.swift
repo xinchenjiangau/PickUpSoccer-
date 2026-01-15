@@ -14,6 +14,8 @@ struct MatchRecordView: View {
     @State private var currentTime = Date()
     @State private var showingAddPlayer = false
     @State private var showEndConfirmation = false
+    // [新增] 用于防止重复发送开始指令的状态
+    @State private var hasSyncedStart = false
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var redTeamPlayers: [Player] {
@@ -169,7 +171,16 @@ struct MatchRecordView: View {
         }
         .onAppear {
             _ = match.id
-            WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
+            
+            // MARK: - 🔴 修复：防止重复发送 startMatch
+            // 只有当这是视图第一次加载，且并未发送过指令时才发送
+            if !hasSyncedStart {
+                print("🚀 MatchRecordView appearing: Sending startMatch to watch.")
+                WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
+                hasSyncedStart = true
+            } else {
+                print("ℹ️ MatchRecordView appearing: startMatch already sent, skipping.")
+            }
         }
         .onChange(of: match.status) { oldStatus, newStatus in
             if newStatus == .finished {

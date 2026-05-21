@@ -39,14 +39,28 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             return
         }
 
-        let playersPayload = match.playerStats.map { stats in
-            [
-                "id": stats.player!.id.uuidString,
-                "name": stats.player!.name,
-                // [修复] 适配新的 Team 枚举：如果是 .home 则 isHomeTeam 为 true
+        // [🚨 修复] 使用 compactMap 安全解包，去除 '!' 强制解包
+        // 如果某个 stats 关联的 player 为空，仅跳过该条目，避免整个 App 崩溃
+        let playersPayload = match.playerStats.compactMap { stats -> [String: Any]? in
+            guard let player = stats.player else {
+                print("⚠️ [WatchSync] 警告: 发现 stats.player 为 nil，跳过此球员。")
+                return nil
+            }
+            
+            return [
+                "id": player.id.uuidString,
+                "name": player.name,
                 "isHomeTeam": (stats.team == .home)
             ]
         }
+        
+        // 如果没有有效球员，也无需发送
+        if playersPayload.isEmpty {
+            print("⚠️ [WatchSync] 没有任何有效球员数据，取消发送 startMatch。")
+            return
+        }
+        
+        
         let payload: [String: Any] = [
             "command": "startMatch",
             "matchId": match.id.uuidString,
@@ -242,70 +256,68 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
             return
         }
         
-        // 如果比赛已经结束，则不再处理，防止重复执行
+        // 如果比赛已经结束，则不再处理
         guard match.status != .finished else {
             print("ℹ️ [Sync] 比赛已结束，忽略重复的结束指令。")
+            // 即便已结束，也发送通知确保UI刷新（防止UI卡在进行中）
+            NotificationCenter.default.post(name: .matchEndedFromWatch, object: nil)
             return
         }
 
-        // 3. 获取手机本地已有的事件ID集合，用于去重
+        // 3. 获取手机本地已有的事件ID集合
         let localEventIds = Set(match.events.map { $0.id })
 
         // 4. 解析手表发来的事件列表
-        guard let watchEventsPayload = userInfo["events"] as? [[String: Any]] else {
-            print("⚠️ [Sync] 手表发来的数据中缺少事件列表。")
-            // 即使没有事件，也应该结束比赛
-            match.status = .finished
-            match.updateMatchStats()
-            try? context.save()
-            return
-        }
+        if let watchEventsPayload = userInfo["events"] as? [[String: Any]] {
+            // 5. 遍历并同步缺失事件
+            for eventPayload in watchEventsPayload {
+                guard let eventIdStr = eventPayload["eventId"] as? String,
+                      let eventId = UUID(uuidString: eventIdStr) else { continue }
 
-        // 5. 【核心同步逻辑】遍历手表事件，只添加手机没有的事件
-        for eventPayload in watchEventsPayload {
-            guard let eventIdStr = eventPayload["eventId"] as? String,
-                  let eventId = UUID(uuidString: eventIdStr) else { continue }
+                if !localEventIds.contains(eventId) {
+                    print("🔄 [Sync] 发现并同步一个缺失的事件: \(eventIdStr)")
+                    
+                    guard let eventTypeStr = eventPayload["eventType"] as? String,
+                          let eventType = EventType(rawValue: eventTypeStr),
+                          let timestamp = eventPayload["timestamp"] as? TimeInterval,
+                          let isHomeTeam = eventPayload["isHomeTeam"] as? Bool else { continue }
+                    
+                    let newEvent = MatchEvent(
+                        id: eventId,
+                        eventType: eventType,
+                        timestamp: Date(timeIntervalSince1970: timestamp),
+                        isHomeTeam: isHomeTeam,
+                        match: match
+                    )
 
-            // 如果手机本地没有这个事件，就根据手表的数据创建一个新的
-            if !localEventIds.contains(eventId) {
-                print("🔄 [Sync] 发现并同步一个缺失的事件: \(eventIdStr)")
-                
-                guard let eventTypeStr = eventPayload["eventType"] as? String,
-                      let eventType = EventType(rawValue: eventTypeStr),
-                      let timestamp = eventPayload["timestamp"] as? TimeInterval,
-                      let isHomeTeam = eventPayload["isHomeTeam"] as? Bool else { continue }
-                
-                let newEvent = MatchEvent(
-                    id: eventId, // 使用手表传来的ID，保持一致
-                    eventType: eventType,
-                    timestamp: Date(timeIntervalSince1970: timestamp),
-                    isHomeTeam: isHomeTeam,
-                    match: match
-                )
-
-                // 根据事件类型，关联正确的球员
-                if eventType == .goal, let scorerIdStr = eventPayload["playerId"] as? String, let scorerId = UUID(uuidString: scorerIdStr) {
-                    newEvent.scorer = match.playerStats.first(where: { $0.player?.id == scorerId })?.player
-                    if let assistantIdStr = eventPayload["assistantId"] as? String, let assistantId = UUID(uuidString: assistantIdStr) {
-                        newEvent.assistant = match.playerStats.first(where: { $0.player?.id == assistantId })?.player
+                    // 关联球员逻辑...
+                    if eventType == .goal, let scorerIdStr = eventPayload["playerId"] as? String, let scorerId = UUID(uuidString: scorerIdStr) {
+                        newEvent.scorer = match.playerStats.first(where: { $0.player?.id == scorerId })?.player
+                        if let assistantIdStr = eventPayload["assistantId"] as? String, let assistantId = UUID(uuidString: assistantIdStr) {
+                            newEvent.assistant = match.playerStats.first(where: { $0.player?.id == assistantId })?.player
+                        }
+                    } else if eventType == .save, let goalkeeperIdStr = eventPayload["playerId"] as? String, let goalkeeperId = UUID(uuidString: goalkeeperIdStr) {
+                        newEvent.goalkeeper = match.playerStats.first(where: { $0.player?.id == goalkeeperId })?.player
                     }
-                } else if eventType == .save, let goalkeeperIdStr = eventPayload["playerId"] as? String, let goalkeeperId = UUID(uuidString: goalkeeperIdStr) {
-                    newEvent.goalkeeper = match.playerStats.first(where: { $0.player?.id == goalkeeperId })?.player
+                    
+                    context.insert(newEvent)
                 }
-                
-                context.insert(newEvent)
             }
         }
 
-        // 6. 【最终统计】在数据完全同步后，调用统计函数
+        // 6. 最终统计
         print("✅ [Sync] 数据同步完成，开始最终统计...")
         match.updateMatchStats()
         match.status = .finished
 
-        // 7. 保存所有更改
+        // 7. 保存并发送通知
         do {
             try context.save()
-            print("🎉 [Sync] 比赛已成功结束，统计数据已更新！事件总数: \(match.events.count)")
+            print("🎉 [Sync] 比赛已成功结束，统计数据已更新！")
+            
+            // [新增] 发送通知告诉 UI 结束比赛
+            NotificationCenter.default.post(name: .matchEndedFromWatch, object: nil)
+            
         } catch {
             print("❌ [Sync] 保存最终比赛数据失败: \(error)")
         }
@@ -452,4 +464,8 @@ class WatchConnectivityManager: NSObject, WCSessionDelegate, ObservableObject {
         try? context.save()
         print("✅ 已同步手表创建的新球员: \(name)")
     }
+}
+// [新增] 扩展 Notification.Name，放在文件最末尾
+extension Notification.Name {
+    static let matchEndedFromWatch = Notification.Name("matchEndedFromWatch")
 }

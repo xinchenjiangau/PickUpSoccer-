@@ -5,10 +5,13 @@ struct TeamSelectView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @State var selectedPlayers: [Player]
-    @State private var playerColors: [UUID: Color] = [:] // 存储每个球员的颜色
-    @State private var firstPlayerSelected: Bool = false // 记录是否已选择第一个球员
-    @State private var showingMatchRecord = false // 状态变量
-    @State private var currentMatch: Match? // 存储当前创建的比赛
+    @State private var playerColors: [UUID: Color] = [:]
+    @State private var firstPlayerSelected: Bool = false
+    
+    // [修改 1] 使用 navigateToMatch 控制新版导航
+    @State private var navigateToMatch = false
+    @State private var currentMatch: Match?
+    
     @State private var redTeamAverageScore: Double = 0
     @State private var blueTeamAverageScore: Double = 0
     @EnvironmentObject var coordinator: NavigationCoordinator
@@ -26,17 +29,11 @@ struct TeamSelectView: View {
     }
     
     private func randomizeTeams() {
-        // 清空现有分配
         playerColors.removeAll()
-        
-        // 随机打乱球员顺序
         let shuffledPlayers = selectedPlayers.shuffled()
-        
-        // 计算每队应有人数
         let totalPlayers = selectedPlayers.count
-        let redTeamSize = totalPlayers / 2 + (totalPlayers % 2) // 如果是奇数，红队多一人
+        let redTeamSize = totalPlayers / 2 + (totalPlayers % 2)
         
-        // 分配球员
         for (index, player) in shuffledPlayers.enumerated() {
             playerColors[player.id] = index < redTeamSize ? .red : .blue
         }
@@ -61,18 +58,12 @@ struct TeamSelectView: View {
                     }) {
                         HStack {
                             Text(player.name)
-                                .foregroundColor(playerColors[player.id] ?? .gray) // 默认灰色
+                                .foregroundColor(playerColors[player.id] ?? .gray)
                         }
                     }
                 }
             }
-            // 跳转到比赛记录页面
-            NavigationLink(
-                destination: currentMatch.map { MatchRecordView(match: $0).environmentObject(coordinator) },
-                isActive: $showingMatchRecord
-            ) {
-                EmptyView()
-            }
+            // [修改 2] 移除了旧的 NavigationLink，它容易导致崩溃
         }
         .navigationTitle("选择球队")
         .toolbar {
@@ -88,85 +79,87 @@ struct TeamSelectView: View {
                 }
             }
         }
-        .onChange(of: showingMatchRecord) { oldValue, newValue in
+        // [修改 3] 使用新的导航修饰符，安全性更高
+        .navigationDestination(isPresented: $navigateToMatch) {
+            if let match = currentMatch {
+                MatchRecordView(match: match)
+                    .environmentObject(coordinator)
+            }
+        }
+        .onChange(of: navigateToMatch) { oldValue, newValue in
+            // 当从比赛页面返回时，关闭当前页面
             if !newValue {
-                dismiss() // 当 MatchRecordView 关闭时，返回到 MatchesView
+                dismiss()
             }
         }
     }
     
     private func createAndStartMatch() {
-        // 创建新的比赛，只传入必要参数
+        // 创建新的比赛
         let newMatch = Match(
-            id: UUID(),
-            status: .inProgress,  // 创建时直接设置为进行中
             homeTeamName: "红队",
             awayTeamName: "蓝队"
         )
+        newMatch.status = .inProgress
         
-        // 关联赛季逻辑 (保持与 ConfirmationView 一致)
+        // 关联赛季
         if let seasonID = selectedSeasonID,
            let targetSeason = seasons.first(where: { $0.id == seasonID }) {
             newMatch.season = targetSeason
-        } else {
-            if let current = seasons.first(where: { $0.isCurrent }) {
-                newMatch.season = current
-            }
+        } else if let current = seasons.first(where: { $0.isCurrent }) {
+            newMatch.season = current
         }
         
-        // 初始化比分
-        newMatch.homeScore = 0
-        newMatch.awayScore = 0
-        
-        // 初始化空数组
+        // 初始化空数组（防止 nil 访问）
         newMatch.events = []
         newMatch.playerStats = []
         
-        // 保存到数据库 (先插入以确保关联正常)
         modelContext.insert(newMatch)
         
-        // 为每个球员创建比赛统计
+        // 创建统计数据
         for player in redTeam {
-            // [修复点] 这里红队对应 .home，且必须传入 team 参数
             let stats = PlayerMatchStats(player: player, match: newMatch, team: .home)
             newMatch.playerStats.append(stats)
         }
         
         for player in blueTeam {
-            // [修复点] 这里蓝队对应 .away，且必须传入 team 参数
             let stats = PlayerMatchStats(player: player, match: newMatch, team: .away)
             newMatch.playerStats.append(stats)
         }
         
-        // 保存当前比赛并显示比赛记录页面
-        currentMatch = newMatch
-        showingMatchRecord = true
-        
-        try? modelContext.save()
+        // MARK: - 关键修复：先保存，再跳转
+        // 只有当 try? modelContext.save() 成功执行后，match 对象才拥有永久 ID
+        // 此时再跳转，MatchRecordView 读取的就是安全的数据了
+        do {
+            try modelContext.save()
+            print("✅ 比赛创建成功，准备跳转。ID: \(newMatch.id)")
+            
+            // 赋值并触发跳转
+            currentMatch = newMatch
+            navigateToMatch = true
+        } catch {
+            print("❌ 保存比赛失败: \(error)")
+            // 可以在这里加一个 Alert 提示用户保存失败，而不是让它崩溃
+        }
     }
     
     private func togglePlayerColor(_ player: Player) {
         if !firstPlayerSelected {
-            // 第一次点击，设置第一个球员为红色，其他为蓝色
             playerColors[player.id] = .red
             firstPlayerSelected = true
-            
-            // 将其他球员设置为蓝色
             for otherPlayer in selectedPlayers where otherPlayer.id != player.id {
                 playerColors[otherPlayer.id] = .blue
             }
         } else {
-            // 如果已经选择了第一个球员，切换颜色
             if playerColors[player.id] == .red {
-                playerColors[player.id] = .blue // 切换为蓝色
+                playerColors[player.id] = .blue
             } else {
-                playerColors[player.id] = .red // 切换为红色
+                playerColors[player.id] = .red
             }
         }
         updateTeamAverageScores()
     }
     
-    // 添加队伍人数显示
     var teamCountsView: some View {
         HStack {
             Text("红队: \(redTeam.count)人")
@@ -181,9 +174,7 @@ struct TeamSelectView: View {
         .padding(.horizontal)
     }
     
-    /// 按评分均衡分队（贪心算法）
     func balancedTeams(players: [Player], season: Season?) -> ([Player], [Player]) {
-        // 1. 按评分排序
         let sortedPlayers = players.sorted {
             $0.averageScoreForSeason(season) > $1.averageScoreForSeason(season)
         }
@@ -194,7 +185,6 @@ struct TeamSelectView: View {
         var sumA: Double = 0
         var sumB: Double = 0
         
-        // 2. 使用贪心策略分配球员
         for player in sortedPlayers {
             let score = player.averageScoreForSeason(season)
             if (sumA <= sumB && teamA.count < teamSize) || teamB.count >= (players.count - teamSize) {
@@ -210,19 +200,13 @@ struct TeamSelectView: View {
     }
     
     private func assignBalancedTeams() {
-        // 添加错误处理
         guard !selectedPlayers.isEmpty else { return }
         
         let (red, blue) = balancedTeams(players: selectedPlayers, season: nil)
         playerColors.removeAll()
         
-        // 使用批量更新减少重绘次数
-        for player in red {
-            playerColors[player.id] = .red
-        }
-        for player in blue {
-            playerColors[player.id] = .blue
-        }
+        for player in red { playerColors[player.id] = .red }
+        for player in blue { playerColors[player.id] = .blue }
         
         firstPlayerSelected = true
         updateTeamAverageScores()
@@ -245,8 +229,4 @@ extension Array {
         result += Array(self[1...]).combinations(ofCount: k)
         return result
     }
-}
-
-#Preview {
-    TeamSelectView(selectedPlayers: [Player(name: "球员1", position: .forward), Player(name: "球员2", position: .midfielder)])
 }

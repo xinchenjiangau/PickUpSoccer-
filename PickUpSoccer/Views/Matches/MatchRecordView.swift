@@ -171,35 +171,43 @@ struct MatchRecordView: View {
         }
         .onAppear {
             _ = match.id
-            
-            // MARK: - 🔴 修复：防止重复发送 startMatch
-            // 只有当这是视图第一次加载，且并未发送过指令时才发送
             if !hasSyncedStart {
                 print("🚀 MatchRecordView appearing: Sending startMatch to watch.")
                 WatchConnectivityManager.shared.sendStartMatchToWatch(match: match)
                 hasSyncedStart = true
-            } else {
-                print("ℹ️ MatchRecordView appearing: startMatch already sent, skipping.")
             }
         }
+        // [修复 1] 监听数据变化 (原有逻辑)
         .onChange(of: match.status) { oldStatus, newStatus in
             if newStatus == .finished {
-                coordinator.shouldDismissParticipationSheet = true
-                dismiss()
+                handleMatchEnded()
             }
         }
+        // [修复 2] 监听通知 (新增逻辑，确保必达)
+        .onReceive(NotificationCenter.default.publisher(for: .matchEndedFromWatch)) { _ in
+            print("📱 UI收到结束比赛通知，正在关闭页面...")
+            handleMatchEnded()
+        }
+    }
+    
+    // 统一处理结束逻辑
+    private func handleMatchEnded() {
+        // 设置协调器状态，通知 MatchesView 关闭整个 Sheet (TeamSelectView + MatchRecordView)
+        coordinator.shouldDismissParticipationSheet = true
+        // 同时也尝试 dismiss 自己，双重保险
+        dismiss()
     }
     
     private func endMatch() {
         match.status = .finished
         match.updateMatchStats()
         
-        // [关键修复] 同步结束指令给手表
+        // 发送给手表
         WatchConnectivityManager.shared.sendFullMatchEndToWatch(match: match)
         
-        coordinator.shouldDismissParticipationSheet = true
         try? modelContext.save()
-        dismiss()
+        
+        handleMatchEnded()
     }
 }
 
@@ -223,7 +231,6 @@ struct TimelineEventView: View {
             } else {
                 return "\(scorerName) Goal!"
             }
-        
         case .foul:
             return "\(event.scorer?.name ?? "Unknown") Foul"
         case .save:
